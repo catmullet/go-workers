@@ -27,8 +27,8 @@
 ```go
   func main() {
     ctx := context.Background()
-    worker1 := goworker.NewWorker(ctx, workerFunction, 100).Work()
-    worker2 := goworker.NewWorker(ctx, workerFunction, 100).InFrom(worker1).Work()
+    worker1 := goworker.NewWorker(ctx, workerFunction1, 100).Work()
+    worker2 := goworker.NewWorker(ctx, workerFunction2, 100).InFrom(worker1).Work()
     
     worker1.Send("hello world")
     
