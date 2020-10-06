@@ -8,7 +8,9 @@
     ctx := context.Background()
     worker := goworker.NewWorker(ctx, workerFunction, 100).Work()
     
-    worker.Send("hello world")
+    for i := 0; i < 10; i++ {
+      worker.Send("hello world")
+    }
     
     worker.Close()
     err := worker.Wait()
@@ -30,7 +32,9 @@
     worker1 := goworker.NewWorker(ctx, workerFunction1, 100).Work()
     worker2 := goworker.NewWorker(ctx, workerFunction2, 100).InFrom(worker1).Work()
     
-    worker1.Send("hello world")
+    for i := 0; i < 10; i++ {
+      worker1.Send("hello world")
+    }
     
     worker1.Close()
     err := worker1.Wait()
