@@ -86,6 +86,7 @@
 		    ID:   "123",
 		    Name: "worker3",
 	    }
+	    
         // Calling .Work() on a new worker creates the number of workers specified and starts 
         // listening on the in channel
 	    worker1 := goworker.NewWorker(ctx, workerFunction, 100).Work()
@@ -95,12 +96,14 @@
         // !!This is not meant to replace the in channel!! It is for configuration within the worker function.
 	    worker3 := goworker.NewWorker(ctx, worker3Function, 200).
 		    AddField("config", config).
+		    
         // .InFrom() allows you to listen to the out channel of other workers. It will route all traffic through the 
         // in channel. You can specify multiple workers but it is up to you to decipher incoming traffic. 
 		    InFrom(worker1, worker2).
 		    Work()
 
 	    for i := 0; i < 10000; i++ {
+	    
         // The .Send() method allows you to easily send into the worker through the in channel
 		    worker1.Send(fmt.Sprintf("(%d) Hello, from worker1.", i))
 		    worker2.Send(fmt.Sprintf("(%d) Hello, from worker2.", i))
