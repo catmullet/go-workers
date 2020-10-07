@@ -4,26 +4,26 @@
 # Examples
 ## Standard one go worker setup
 ```go
-  func main() {
-    ctx := context.Background()
-    worker := goworker.NewWorker(ctx, workerFunction, 100).Work()
+    func main() {
+        ctx := context.Background()
+        worker := goworker.NewWorker(ctx, workerFunction, 100).Work()
     
-    for i := 0; i < 10; i++ {
-      worker.Send("hello world")
+        for i := 0; i < 10; i++ {
+            worker.Send("hello world")
+        }
+    
+        worker.Close()
+        err := worker.Wait()
+    
+        fmt.Println(err)
     }
-    
-    worker.Close()
-    err := worker.Wait()
-    
-    fmt.Println(err)
-  }
   
-  func workerFunction(w *goworker.Worker) error {
-    for in := range w.In() {
-      fmt.Println(in)
-     }
-     return nil
-  }
+    func workerFunction(w *goworker.Worker) error {
+        for in := range w.In() {
+            fmt.Println(in)
+        }
+        return nil
+    }
 ```
 ## Two workers setup
 ```go
@@ -33,7 +33,7 @@
         worker2 := goworker.NewWorker(ctx, workerFunction2, 100).InFrom(worker1).Work()
     
         for i := 0; i < 10; i++ {
-        worker1.Send("hello world")
+            worker1.Send("hello world")
         }
     
         worker1.Close()
