@@ -20,7 +20,7 @@ type Worker struct {
 	errGroup        *ErrGroup
 }
 
-// NewIngestionWorker factory method to return new Worker
+// NewWorker factory method to return new Worker
 func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error), numberOfWorkers int) (worker *Worker) {
 	worker = &Worker{
 		numberOfWorkers: numberOfWorkers,
@@ -43,6 +43,7 @@ func (iw *Worker) Send(in interface{}) {
 	iw.inChan <- in
 }
 
+// InFrom assigns workers out channel to this workers in channel
 func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	for _, worker := range inWorker {
 		worker.outChan = iw.inChan
@@ -50,6 +51,7 @@ func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	return iw
 }
 
+// AddField Adds a variable, struct or pointer by key value
 func (iw *Worker) AddField(key interface{}, value interface{}) *Worker {
 	iw.lock.Lock()
 	defer iw.lock.Unlock()
@@ -65,6 +67,7 @@ func (iw *Worker) Work() *Worker {
 	return iw
 }
 
+// GetFieldString returns value of key as string
 func (iw *Worker) GetFieldString(name string) (st string, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -76,6 +79,7 @@ func (iw *Worker) GetFieldString(name string) (st string, ok bool) {
 	return
 }
 
+// GetFieldInt returns value of key as int
 func (iw *Worker) GetFieldInt(name string) (in int, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -87,6 +91,7 @@ func (iw *Worker) GetFieldInt(name string) (in int, ok bool) {
 	return
 }
 
+// GetFieldInt32 returns value of key as int32
 func (iw *Worker) GetFieldInt32(name string) (in int32, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -98,6 +103,7 @@ func (iw *Worker) GetFieldInt32(name string) (in int32, ok bool) {
 	return
 }
 
+// GetFieldInt64 returns value of key as int64
 func (iw *Worker) GetFieldInt64(name string) (in int64, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -109,6 +115,7 @@ func (iw *Worker) GetFieldInt64(name string) (in int64, ok bool) {
 	return
 }
 
+// GetFieldFloat32 returns value of key as float32
 func (iw *Worker) GetFieldFloat32(name string) (fl float32, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -120,6 +127,7 @@ func (iw *Worker) GetFieldFloat32(name string) (fl float32, ok bool) {
 	return
 }
 
+// GetFieldFloat64 returns value of key as float64
 func (iw *Worker) GetFieldFloat64(name string) (fl float64, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -131,6 +139,7 @@ func (iw *Worker) GetFieldFloat64(name string) (fl float64, ok bool) {
 	return
 }
 
+// GetFieldBool returns value of key as bool
 func (iw *Worker) GetFieldBool(name string) (bl bool, ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -142,6 +151,7 @@ func (iw *Worker) GetFieldBool(name string) (bl bool, ok bool) {
 	return
 }
 
+// GetFieldObject returns value of key as passed in objects type
 func (iw *Worker) GetFieldObject(name string, obj interface{}) (ok bool) {
 	iw.lock.RLock()
 	defer iw.lock.RUnlock()
@@ -166,10 +176,12 @@ func (iw *Worker) GetFieldObject(name string, obj interface{}) (ok bool) {
 	return
 }
 
+// In returns the workers in channel
 func (iw *Worker) In() chan interface{} {
 	return iw.inChan
 }
 
+// Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
 	iw.outChan <- out
 }
@@ -180,6 +192,7 @@ func (iw *Worker) Wait() (err error) {
 	return
 }
 
+// Cancel stops all workers
 func (iw *Worker) Cancel() {
 	iw.errGroup.cancel()
 }
