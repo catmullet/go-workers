@@ -27,41 +27,41 @@
 ```
 ## Two workers setup
 ```go
-func main() {
-    ctx := context.Background()
-    worker1 := goworker.NewWorker(ctx, workerFunction1, 100).Work()
-    worker2 := goworker.NewWorker(ctx, workerFunction2, 100).InFrom(worker1).Work()
+    func main() {
+        ctx := context.Background()
+        worker1 := goworker.NewWorker(ctx, workerFunction1, 100).Work()
+        worker2 := goworker.NewWorker(ctx, workerFunction2, 100).InFrom(worker1).Work()
     
-    for i := 0; i < 10; i++ {
-      worker1.Send("hello world")
+        for i := 0; i < 10; i++ {
+        worker1.Send("hello world")
+        }
+    
+        worker1.Close()
+        err := worker1.Wait()
+    
+        fmt.Println(err)
+    
+        worker2.Close()
+        err = worker2.Wait()
+    
+        fmt.Println(err)
     }
-    
-    worker1.Close()
-    err := worker1.Wait()
-    
-    fmt.Println(err)
-    
-    worker2.Close()
-    err = worker2.Wait()
-    
-    fmt.Println(err)
-  }
+   
+    func workerFunction1(w *goworker.Worker) error {
+        for in := range w.In() {
+            fmt.Println(fmt.Sprintf("Worker 1, %s", in)
+            in = strings.ToTitle(in.(string))
+            w.Out(in)
+        }
+        return nil
+    }
   
-  func workerFunction1(w *goworker.Worker) error {
-    for in := range w.In() {
-      fmt.Println(fmt.Sprintf("Worker 1, %s", in)
-      in = strings.ToTitle(in.(string))
-      w.Out(in)
-     }
-     return nil
-  }
-  
-  func workerFunction2(w *goworker.Worker) error {
-    for in := range w.In() {
-      fmt.Println(fmt.Sprintf("Worker 2, %s", in)
-      }
-      return nil
-  }
+    func workerFunction2(w *goworker.Worker) error {
+        for in := range w.In() {
+            fmt.Println(fmt.Sprintf("Worker 2, %s", in)
+        }
+        return nil
+    }
 ```
 ## Complete Example
 ```go
