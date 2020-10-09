@@ -6,8 +6,10 @@ import (
 	"sync"
 )
 
-type Fields map[interface{}]interface{}
+type fields map[interface{}]interface{}
 
+// Worker The object to hold all necessary configuration and channels for the worker
+// only accessible by it's methods.
 type Worker struct {
 	numberOfWorkers int
 	Ctx             context.Context
@@ -16,7 +18,7 @@ type Worker struct {
 	outChan         chan interface{}
 	lock            *sync.RWMutex
 	timerChan       chan bool
-	fields          Fields
+	fields          fields
 	errGroup        *ErrGroup
 }
 
@@ -30,7 +32,7 @@ func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error),
 		outChan:         make(chan interface{}),
 		timerChan:       make(chan bool),
 		lock:            new(sync.RWMutex),
-		fields:          make(Fields),
+		fields:          make(fields),
 		errGroup:        nil,
 	}
 

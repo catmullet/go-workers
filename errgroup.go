@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// A Group is a collection of goroutines working on subtasks that are part of
+// ErrGroup A Group is a collection of goroutines working on subtasks that are part of
 // the same overall task.
 //
 // A zero Group is valid and does not cancel on error.
