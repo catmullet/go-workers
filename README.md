@@ -6,7 +6,11 @@ Wrapping concurrent functions in a goworker wrapper makes it clean, safe and eas
 
     func workerFunction(w *goworker.Worker) error {
     	for in := range w.In() {
-    		// Do work here
+        // Do work here with input
+            fmt.Prinln(in)
+            
+        // Out to another worker
+            w.Out(<output>)
     	}
     	return nil
     }
@@ -14,4 +18,6 @@ Wrapping concurrent functions in a goworker wrapper makes it clean, safe and eas
 # Usage
 * Safely Running groups of workers concurrently or consecutively that require input and output from channels
 # Examples
-
+* ![Quickstart](https://github.com/catmullet/go-workers/blob/master/examples/quickstart/quickstart.go)
+* ![Multiple Go Workers](https://github.com/catmullet/go-workers/blob/master/examples/multiple_workers/multipleworkers.go)
+* ![Passing Fields](https://github.com/catmullet/go-workers/blob/master/examples/passing_fields/passingfields.go)
