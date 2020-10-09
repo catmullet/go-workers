@@ -7,7 +7,7 @@ import (
 	"math/rand"
 )
 
-type WorkerTwoConfig struct {
+type workerTwoConfig struct {
 	AmountToMultiply int
 }
 
@@ -17,7 +17,7 @@ func main() {
 		AddField("amountToMultiply", 2).
 		Work()
 	workerTwo := goworker.NewWorker(ctx, workerFunctionTwo, 10).
-		AddField("amountToMultiply", &WorkerTwoConfig{AmountToMultiply: 4}).
+		AddField("amountToMultiply", &workerTwoConfig{AmountToMultiply: 4}).
 		InFrom(workerOne).
 		Work()
 
@@ -49,7 +49,7 @@ func workerFunctionOne(w *goworker.Worker) error {
 }
 
 func workerFunctionTwo(w *goworker.Worker) error {
-	var workerConfig WorkerTwoConfig
+	var workerConfig workerTwoConfig
 	w.BindField("amountToMultiply", &workerConfig)
 
 	for in := range w.In() {
