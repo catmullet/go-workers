@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	goworker "github.com/catmullet/go-workers"
 	"math/rand"
@@ -38,10 +37,8 @@ func main() {
 }
 
 func workerFunctionOne(w *goworker.Worker) error {
-	amountToMultiply, ok := w.GetFieldInt("amountToMultiply")
-	if !ok {
-		return errors.New("No amount to multiply supplied")
-	}
+	var amountToMultiply int
+	w.BindField("amountToMultiply", &amountToMultiply)
 
 	for in := range w.In() {
 		total := in.(int) * amountToMultiply
@@ -53,7 +50,7 @@ func workerFunctionOne(w *goworker.Worker) error {
 
 func workerFunctionTwo(w *goworker.Worker) error {
 	var workerConfig WorkerTwoConfig
-	w.GetFieldObject("amountToMultiply", &workerConfig)
+	w.BindField("amountToMultiply", &workerConfig)
 
 	for in := range w.In() {
 		totalFromWorkerOne := in.(int)
