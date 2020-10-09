@@ -45,7 +45,7 @@ func workerFunctionOne(w *goworker.Worker) error {
 
 	for in := range w.In() {
 		total := in.(int) * amountToMultiply
-		fmt.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+		fmt.Println(fmt.Sprintf("%d * %d = %d", in.(int), amountToMultiply, total))
 		w.Out(total)
 	}
 	return nil
@@ -57,7 +57,7 @@ func workerFunctionTwo(w *goworker.Worker) error {
 
 	for in := range w.In() {
 		totalFromWorkerOne := in.(int)
-		fmt.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*workerConfig.AmountToMultiply))
+		fmt.Println(fmt.Sprintf("%d * %d = %d", totalFromWorkerOne, workerConfig.AmountToMultiply, totalFromWorkerOne*workerConfig.AmountToMultiply))
 	}
 	return nil
 }

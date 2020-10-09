@@ -161,15 +161,10 @@ func (iw *Worker) GetFieldObject(name string, obj interface{}) (ok bool) {
 		ov := reflect.ValueOf(obj)
 
 		if ov.Kind() == reflect.Ptr {
-			if iv.Type() == ov.Type() || ov.Elem().Type() == iv.Type() {
-				if iv.Kind() == reflect.Ptr && ov.Kind() == reflect.Ptr {
-					if ov.Elem().Kind() != reflect.Ptr {
-						ov.Elem().Set(iv.Elem())
-					}
-				}
-				if ov.Kind() == reflect.Ptr && iv.Kind() == reflect.Struct {
-					ov.Elem().Set(iv)
-				}
+			if iv.Type() == ov.Elem().Type() {
+				ov.Elem().Set(iv)
+			} else {
+				ov.Elem().Set(iv.Elem())
 			}
 		}
 	}
