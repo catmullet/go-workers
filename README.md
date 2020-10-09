@@ -1,4 +1,5 @@
 ![go workers](https://raw.githubusercontent.com/catmullet/go-workers/assets/goworkers.png)
+![Code Climate maintainability](https://img.shields.io/codeclimate/maintainability-percentage/catmullet/go-workers)
 # Simple Workers Wrapper
 Wrapping concurrent functions in a goworker wrapper makes it clean, safe and easy.
 ```go
