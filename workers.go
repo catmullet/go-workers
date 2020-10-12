@@ -19,7 +19,7 @@ type Worker struct {
 	lock            *sync.RWMutex
 	timerChan       chan bool
 	fields          fields
-	errGroup        *ErrGroup
+	errGroup        *errGroup
 }
 
 // NewWorker factory method to return new Worker
@@ -36,7 +36,7 @@ func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error),
 		errGroup:        nil,
 	}
 
-	worker.errGroup, _ = ErrGroupWithContext(ctx)
+	worker.errGroup, _ = errGroupWithContext(ctx)
 	return
 }
 
@@ -64,7 +64,7 @@ func (iw *Worker) AddField(key interface{}, value interface{}) *Worker {
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
 	for i := 0; i < iw.numberOfWorkers; i++ {
-		iw.errGroup.Go(iw.workerFunction, iw)
+		iw.errGroup.goWork(iw.workerFunction, iw)
 	}
 	return iw
 }
@@ -101,7 +101,7 @@ func (iw *Worker) Out(out interface{}) {
 
 // Wait wait for all the workers to finish up
 func (iw *Worker) Wait() (err error) {
-	err = iw.errGroup.Wait()
+	err = iw.errGroup.wait()
 	return
 }
 
