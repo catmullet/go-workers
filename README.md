@@ -1,6 +1,6 @@
 ![go workers](https://raw.githubusercontent.com/catmullet/go-workers/assets/goworkers_header.png)
 
-# Simple Workers Wrapper [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)
+# Simple Workers [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)
 Wrapping concurrent functions in a goworker wrapper makes it clean, safe and easy.
 ```go
     worker := goworker.NewWorker(ctx, workerFunction, 10).Work()
