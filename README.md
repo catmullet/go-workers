@@ -9,7 +9,7 @@
 # Getting Started
 ### Pull in the dependency
 ```zsh
-go get github.com/catmullet/go-workers`
+go get github.com/catmullet/go-workers
 ```
 
 ### Add the import to your project
