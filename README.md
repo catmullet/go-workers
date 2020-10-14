@@ -45,8 +45,6 @@ if err := worker.Wait(); err != nil {
 ```
 
 ## Working With Multiple Workers
-<img src="https://raw.githubusercontent.com/catmullet/go-workers/assets/constworker_passwork.png" alt="worker" width="160"/>
-
 ### Passing work form one worker to the next 
 
 By using the InFrom method you can tell `workerTwo` to accept output from `workerOne`
