@@ -3,15 +3,22 @@
 # Simple Workers [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)
 Wrapping concurrent functions in a goworker wrapper makes it clean, safe and easy.
 ```go
-    worker := goworker.NewWorker(ctx, workerFunction, 10).Work()
+    workerOne := worker.NewWorker(ctx, workerOneFunction, 10).Work()
+    workerTwo := worker.NewWorker(ctx, workerTwoFunction, 10).InFrom(workerOne).Work()
 
-    func workerFunction(w *goworker.Worker) error {
+    func workerOneFunction(w *goworker.Worker) error {
     	for in := range w.In() {
         // Do work here with input
-            fmt.Prinln(in)
             
-        // Out to another worker
+        // Output to another worker
             w.Out(<output>)
+    	}
+    	return nil
+    }
+    
+    func workerTwoFunction(w *goworker.Worker) error {
+    	for in := range w.In() {
+        // Do work here from other worker
     	}
     	return nil
     }
