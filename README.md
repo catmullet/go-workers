@@ -3,9 +3,9 @@
 [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)    
 
 # Examples
-* ![Quickstart](https://github.com/catmullet/go-workers/blob/master/examples/quickstart/quickstart.go)
-* ![Multiple Go Workers](https://github.com/catmullet/go-workers/blob/master/examples/multiple_workers/multipleworkers.go)
-* ![Passing Fields](https://github.com/catmullet/go-workers/blob/master/examples/passing_fields/passingfields.go)
+* [Quickstart](https://github.com/catmullet/go-workers/blob/master/examples/quickstart/quickstart.go)
+* [Multiple Go Workers](https://github.com/catmullet/go-workers/blob/master/examples/multiple_workers/multipleworkers.go)
+* [Passing Fields](https://github.com/catmullet/go-workers/blob/master/examples/passing_fields/passingfields.go)
 # Getting Started
 ### Pull in the dependency
 ```zsh
