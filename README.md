@@ -1,4 +1,4 @@
-![go workers](https://raw.githubusercontent.com/catmullet/go-workers/assets/goworkers_header.png)
+![go workers](https://raw.githubusercontent.com/catmullet/go-workers/assets/constworker_header_anim.gif)
 
 [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)    
 
