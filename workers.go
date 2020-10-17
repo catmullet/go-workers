@@ -42,6 +42,9 @@ func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error),
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
+	if iw.errGroup.err != nil {
+		return
+	}
 	iw.inChan <- in
 }
 
