@@ -26,7 +26,7 @@ func main() {
 }
 
 func timeoutWorkerFunction(w *worker.Worker) error {
-	timer := time.NewTimer(2 * time.Second)
+	timer := time.NewTimer(10 * time.Second)
 	var err error
 
 	for {
@@ -35,7 +35,11 @@ func timeoutWorkerFunction(w *worker.Worker) error {
 			err = errors.New("timed out")
 			return err
 		case in := <-w.In():
-			fmt.Println(in)
+			if in != nil {
+				fmt.Println(in)
+			} else {
+				return nil
+			}
 			time.Sleep(time.Second)
 		}
 	}
