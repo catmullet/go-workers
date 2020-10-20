@@ -117,11 +117,15 @@ func (iw *Worker) Cancel() {
 	iw.errGroup.cancel()
 }
 
+// SetDeadline allows a time to be set when the workers should stop.
+// Deadline needs to be handled by the IsDone method.
 func (iw *Worker) SetDeadline(t time.Time) *Worker {
 	iw.Ctx, _ = context.WithDeadline(iw.Ctx, t)
 	return iw
 }
 
+// SetTimeout allows a time duration to be set when the workers should stop.
+// Timeout needs to be handled by the IsDone method.
 func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
 	iw.timeout = duration
 	return iw
