@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"time"
 )
 
 type fields map[interface{}]interface{}
@@ -17,7 +18,7 @@ type Worker struct {
 	inChan          chan interface{}
 	outChan         chan interface{}
 	lock            *sync.RWMutex
-	timerChan       chan bool
+	timeout         time.Duration
 	fields          fields
 	errGroup        *errGroup
 }
@@ -30,7 +31,7 @@ func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error),
 		workerFunction:  workerFunction,
 		inChan:          make(chan interface{}),
 		outChan:         make(chan interface{}),
-		timerChan:       make(chan bool),
+		timeout:         time.Duration(0),
 		lock:            new(sync.RWMutex),
 		fields:          make(fields),
 		errGroup:        nil,
@@ -66,6 +67,9 @@ func (iw *Worker) AddField(key interface{}, value interface{}) *Worker {
 
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
+	if iw.timeout > 0 {
+		iw.Ctx, _ = context.WithTimeout(iw.Ctx, iw.timeout)
+	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
 		iw.errGroup.goWork(iw.workerFunction, iw)
 	}
@@ -111,6 +115,21 @@ func (iw *Worker) Wait() (err error) {
 // Cancel stops all workers
 func (iw *Worker) Cancel() {
 	iw.errGroup.cancel()
+}
+
+func (iw *Worker) SetDeadline(t time.Time) *Worker {
+	iw.Ctx, _ = context.WithDeadline(iw.Ctx, t)
+	return iw
+}
+
+func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
+	iw.timeout = duration
+	return iw
+}
+
+// IsDone returns a context's cancellation or error
+func (iw *Worker) IsDone() <-chan struct{} {
+	return iw.Ctx.Done()
 }
 
 // Close Note that it is only necessary to close a channel if the receiver is
