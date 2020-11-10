@@ -2,6 +2,7 @@ package goworker
 
 import (
 	"context"
+	"golang.org/x/sync/errgroup"
 	"sync"
 	"time"
 )
@@ -24,7 +25,7 @@ type Worker struct {
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	fields          fields
-	errGroup        *errGroup
+	errGroup        *errgroup.Group
 }
 
 // NewWorker factory method to return new Worker
@@ -41,16 +42,18 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		errGroup:        nil,
 	}
 
-	worker.errGroup, _ = errGroupWithContext(ctx)
+	worker.errGroup, _ = errgroup.WithContext(ctx)
 	return
 }
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
-	if iw.errGroup.err != nil {
+	select {
+	case <-iw.IsDone():
 		return
+	default:
+		iw.inChan <- in
 	}
-	iw.inChan <- in
 }
 
 // InFrom assigns workers out channel to this workers in channel
@@ -67,7 +70,10 @@ func (iw *Worker) Work() *Worker {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
-		iw.errGroup.goWork(iw.workerFunction.Work, iw)
+		iw.errGroup.Go(func() error {
+			err := iw.workerFunction.Work(iw)
+			return err
+		})
 	}
 	return iw
 }
@@ -84,14 +90,13 @@ func (iw *Worker) Out(out interface{}) {
 
 // Wait wait for all the workers to finish up
 func (iw *Worker) Wait() (err error) {
-	err = iw.errGroup.wait()
+	err = iw.errGroup.Wait()
 	return
 }
 
 // Cancel stops all workers
 func (iw *Worker) Cancel() {
 	iw.cancel()
-	iw.errGroup.cancel()
 }
 
 // SetDeadline allows a time to be set when the workers should stop.
