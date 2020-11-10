@@ -19,6 +19,7 @@ type Worker struct {
 	outChan         chan interface{}
 	lock            *sync.RWMutex
 	timeout         time.Duration
+	cancel		context.CancelFunc
 	fields          fields
 	errGroup        *errGroup
 }
@@ -68,7 +69,7 @@ func (iw *Worker) AddField(key interface{}, value interface{}) *Worker {
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
 	if iw.timeout > 0 {
-		iw.Ctx, _ = context.WithTimeout(iw.Ctx, iw.timeout)
+		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
 		iw.errGroup.goWork(iw.workerFunction, iw)
@@ -114,13 +115,14 @@ func (iw *Worker) Wait() (err error) {
 
 // Cancel stops all workers
 func (iw *Worker) Cancel() {
+	iw.cancel()
 	iw.errGroup.cancel()
 }
 
 // SetDeadline allows a time to be set when the workers should stop.
 // Deadline needs to be handled by the IsDone method.
 func (iw *Worker) SetDeadline(t time.Time) *Worker {
-	iw.Ctx, _ = context.WithDeadline(iw.Ctx, t)
+	iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
 	return iw
 }
 
