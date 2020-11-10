@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	goworker "github.com/catmullet/go-workers"
+	worker "github.com/catmullet/go-workers"
 	"math/rand"
 )
 
 func main() {
 	ctx := context.Background()
-	workerOne := goworker.NewWorker(ctx, workerFunctionOne, 10).Work()
-	workerTwo := goworker.NewWorker(ctx, workerFunctionTwo, 10).InFrom(workerOne).Work()
+	workerOne := worker.NewWorker(ctx, NewWorkerOne(), 10).Work()
+	workerTwo := worker.NewWorker(ctx, NewWorkerTwo(), 10).InFrom(workerOne).Work()
 
 	for i := 0; i < 10; i++ {
 		workerOne.Send(rand.Intn(100))
@@ -27,19 +27,30 @@ func main() {
 	}
 }
 
-func workerFunctionOne(w *goworker.Worker) error {
+type WorkerOne struct{}
+type WorkerTwo struct{}
+
+func NewWorkerOne() *WorkerOne {
+	return &WorkerOne{}
+}
+
+func NewWorkerTwo() *WorkerTwo {
+	return &WorkerTwo{}
+}
+
+func (wo *WorkerOne) Work(w *worker.Worker) error {
 	for in := range w.In() {
 		total := in.(int) * 2
-		fmt.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+		fmt.Println(fmt.Printf("%d * 2 = %d", in.(int), total))
 		w.Out(total)
 	}
 	return nil
 }
 
-func workerFunctionTwo(w *goworker.Worker) error {
+func (wt *WorkerTwo) Work(w *worker.Worker) error {
 	for in := range w.In() {
 		totalFromWorkerOne := in.(int)
-		fmt.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
+		fmt.Println(fmt.Printf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
 	}
 	return nil
 }

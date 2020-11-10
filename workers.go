@@ -2,19 +2,22 @@ package goworker
 
 import (
 	"context"
-	"reflect"
 	"sync"
 	"time"
 )
 
 type fields map[interface{}]interface{}
 
+type WorkerObject interface {
+	Work(*Worker) error
+}
+
 // Worker The object to hold all necessary configuration and channels for the worker
 // only accessible by it's methods.
 type Worker struct {
 	numberOfWorkers int
 	Ctx             context.Context
-	workerFunction  func(ig *Worker) (err error)
+	workerFunction  WorkerObject
 	inChan          chan interface{}
 	outChan         chan interface{}
 	lock            *sync.RWMutex
@@ -25,7 +28,7 @@ type Worker struct {
 }
 
 // NewWorker factory method to return new Worker
-func NewWorker(ctx context.Context, workerFunction func(ig *Worker) (err error), numberOfWorkers int) (worker *Worker) {
+func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
 	worker = &Worker{
 		numberOfWorkers: numberOfWorkers,
 		Ctx:             ctx,
@@ -58,43 +61,15 @@ func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	return iw
 }
 
-// AddField Adds a variable, struct or pointer by key value
-func (iw *Worker) AddField(key interface{}, value interface{}) *Worker {
-	iw.lock.Lock()
-	defer iw.lock.Unlock()
-	iw.fields[key] = value
-	return iw
-}
-
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
-		iw.errGroup.goWork(iw.workerFunction, iw)
+		iw.errGroup.goWork(iw.workerFunction.Work, iw)
 	}
 	return iw
-}
-
-// BindField returns value of key as passed in objects type
-func (iw *Worker) BindField(name string, obj interface{}) (ok bool) {
-	iw.lock.RLock()
-	defer iw.lock.RUnlock()
-	if param, ok := iw.fields[name]; ok {
-
-		iv := reflect.ValueOf(param)
-		ov := reflect.ValueOf(obj)
-
-		if ov.Kind() == reflect.Ptr {
-			if iv.Type() == ov.Elem().Type() {
-				ov.Elem().Set(iv)
-			} else {
-				ov.Elem().Set(iv.Elem())
-			}
-		}
-	}
-	return
 }
 
 // In returns the workers in channel

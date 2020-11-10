@@ -3,21 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	goworker "github.com/catmullet/go-workers"
+	worker "github.com/catmullet/go-workers"
 	"math/rand"
 )
 
-type workerTwoConfig struct {
-	AmountToMultiply int
-}
-
 func main() {
 	ctx := context.Background()
-	workerOne := goworker.NewWorker(ctx, workerFunctionOne, 10).
-		AddField("amountToMultiply", 2).
+	workerOne := worker.NewWorker(ctx, NewWorkerOne(2), 10).
 		Work()
-	workerTwo := goworker.NewWorker(ctx, workerFunctionTwo, 10).
-		AddField("amountToMultiply", &workerTwoConfig{AmountToMultiply: 4}).
+	workerTwo := worker.NewWorker(ctx, NewWorkerTwo(4), 10).
 		InFrom(workerOne).
 		Work()
 
@@ -36,25 +30,38 @@ func main() {
 	}
 }
 
-func workerFunctionOne(w *goworker.Worker) error {
-	var amountToMultiply int
-	w.BindField("amountToMultiply", &amountToMultiply)
+type WorkerOne struct {
+	amountToMultiply int
+}
+type WorkerTwo struct {
+	amountToMultiply int
+}
 
+func NewWorkerOne(amountToMultiply int) *WorkerOne {
+	return &WorkerOne{
+		amountToMultiply: amountToMultiply,
+	}
+}
+
+func NewWorkerTwo(amountToMultiply int) *WorkerTwo {
+	return &WorkerTwo{
+		amountToMultiply,
+	}
+}
+
+func (wo *WorkerOne) Work(w *worker.Worker) error {
 	for in := range w.In() {
-		total := in.(int) * amountToMultiply
-		fmt.Println(fmt.Sprintf("%d * %d = %d", in.(int), amountToMultiply, total))
+		total := in.(int) * wo.amountToMultiply
+		fmt.Println(fmt.Printf("%d * %d = %d", in.(int), wo.amountToMultiply, total))
 		w.Out(total)
 	}
 	return nil
 }
 
-func workerFunctionTwo(w *goworker.Worker) error {
-	var workerConfig workerTwoConfig
-	w.BindField("amountToMultiply", &workerConfig)
-
+func (wt *WorkerTwo) Work(w *worker.Worker) error {
 	for in := range w.In() {
 		totalFromWorkerOne := in.(int)
-		fmt.Println(fmt.Sprintf("%d * %d = %d", totalFromWorkerOne, workerConfig.AmountToMultiply, totalFromWorkerOne*workerConfig.AmountToMultiply))
+		fmt.Println(fmt.Printf("%d * %d = %d", totalFromWorkerOne, wt.amountToMultiply, totalFromWorkerOne*wt.amountToMultiply))
 	}
 	return nil
 }
