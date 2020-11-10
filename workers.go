@@ -19,7 +19,7 @@ type Worker struct {
 	outChan         chan interface{}
 	lock            *sync.RWMutex
 	timeout         time.Duration
-	cancel		context.CancelFunc
+	cancel          context.CancelFunc
 	fields          fields
 	errGroup        *errGroup
 }
