@@ -28,16 +28,8 @@ func NewTimeoutWorker() *TimeoutWorker {
 	return &TimeoutWorker{}
 }
 
-func (tw *TimeoutWorker) Work(w *worker.Worker) error {
-	for {
-		select {
-		case in := <-w.In():
-			fmt.Println(in)
-			time.Sleep(1 * time.Second)
-		case <-w.IsDone():
-			// due to the nature of err groups in order to stop the worker from
-			// waiting an error needs to be returned
-			return fmt.Errorf("timeout reached")
-		}
-	}
+func (tw *TimeoutWorker) Work(w *worker.Worker, in interface{}) error {
+	fmt.Println(in)
+	time.Sleep(1 * time.Second)
+	return nil
 }

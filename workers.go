@@ -2,15 +2,20 @@ package goworker
 
 import (
 	"context"
+	"errors"
 	"golang.org/x/sync/errgroup"
+	"log"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type fields map[interface{}]interface{}
 
 type WorkerObject interface {
-	Work(*Worker) error
+	Work(w *Worker, in interface{}) error
 }
 
 // Worker The object to hold all necessary configuration and channels for the worker
@@ -25,21 +30,24 @@ type Worker struct {
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	fields          fields
+	sigChan         chan os.Signal
 	errGroup        *errgroup.Group
 }
 
 // NewWorker factory method to return new Worker
 func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
+	cctx, cancel := context.WithCancel(ctx)
 	worker = &Worker{
 		numberOfWorkers: numberOfWorkers,
-		Ctx:             ctx,
+		Ctx:             cctx,
 		workerFunction:  workerFunction,
 		inChan:          make(chan interface{}),
 		outChan:         make(chan interface{}),
-		timeout:         time.Duration(0),
 		lock:            new(sync.RWMutex),
+		timeout:         time.Duration(0),
+		cancel:          cancel,
 		fields:          make(fields),
-		errGroup:        nil,
+		sigChan:         make(chan os.Signal, 1),
 	}
 
 	worker.errGroup, _ = errgroup.WithContext(ctx)
@@ -71,8 +79,16 @@ func (iw *Worker) Work() *Worker {
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
 		iw.errGroup.Go(func() error {
-			err := iw.workerFunction.Work(iw)
-			return err
+			for {
+				select {
+				case <-iw.IsDone():
+					return context.Canceled
+				case in := <-iw.In():
+					if err := iw.workerFunction.Work(iw, in); err != nil {
+						return err
+					}
+				}
+			}
 		})
 	}
 	return iw
@@ -89,6 +105,7 @@ func (iw *Worker) Out(out interface{}) {
 }
 
 // Wait wait for all the workers to finish up
+// Deprecated: use Close instead
 func (iw *Worker) Wait() (err error) {
 	err = iw.errGroup.Wait()
 	return
@@ -121,7 +138,31 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // Close Note that it is only necessary to close a channel if the receiver is
 // looking for a close. Closing the channel is a control signal on the
 // channel indicating that no more data follows. Thus it makes sense to only close the
-// in channel on the worker.
-func (iw *Worker) Close() {
-	close(iw.inChan)
+// in channel on the worker. For now we will just send the cancel signal
+func (iw *Worker) Close() error {
+	iw.Cancel()
+	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+// PassTerminationSignal passes signal to workers
+func (iw *Worker) PassTerminationSignal(sig os.Signal) {
+	iw.sigChan <- sig
+}
+
+// SafeShutdown wait for an interrupt or termination signal and
+// if encountered handle clean shut down/cleanup.
+func (iw *Worker) SafeShutdown() *Worker {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func(chan os.Signal) {
+		sig := <-sigChan
+		log.Printf("workers recieved termination signal: %s", sig.String())
+		if err := iw.Close(); err != nil {
+			log.Printf("workers safely shutdown but recieved error: %s", err.Error())
+		}
+	}(sigChan)
+	return iw
 }

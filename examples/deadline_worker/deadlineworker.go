@@ -17,10 +17,11 @@ func main() {
 		deadlineWorker.Send("hello")
 	}
 
-	err := deadlineWorker.Wait()
+	err := deadlineWorker.Close()
 	if err != nil {
 		fmt.Println(err)
 	}
+	fmt.Println("finished")
 }
 
 type DeadlineWorker struct{}
@@ -29,16 +30,8 @@ func NewDeadlineWorker() *DeadlineWorker {
 	return &DeadlineWorker{}
 }
 
-func (dlw *DeadlineWorker) Work(w *worker.Worker) error {
-	for {
-		select {
-		case in := <-w.In():
-			fmt.Println(in)
-			time.Sleep(1 * time.Second)
-		case <-w.IsDone():
-			// due to the nature of err groups in order to stop the worker from
-			// waiting an error needs to be returned
-			return fmt.Errorf("deadline reached")
-		}
-	}
+func (dlw *DeadlineWorker) Work(w *worker.Worker, in interface{}) error {
+	fmt.Println(in)
+	time.Sleep(1 * time.Second)
+	return nil
 }
