@@ -30,8 +30,8 @@ func NewMyWorker() *MyWorker {
 	return &MyWorker{}
 }
 
-func (my *MyWorker) Work(w *goworker.Worker) error {
-	// work here
+func (my *MyWorker) Work(w *goworker.Worker, in interface{}) error {
+	// work iteration here
 }
 
 worker := worker.NewWorker(ctx, NewMyWorker(), numberOfWorkers)
@@ -41,15 +41,10 @@ Send accepts an interface.  So send it anything you want.
 ```go
 worker.Send("Hello World")
 ```
-### Close the worker when done
-This closes the in channel on the worker and signals to the go functions to stop.
-```go
-worker.Close()
-```
-### Wait for the worker to finish and handle errors
+### Close and wait for the worker to finish and handle errors
 Any error that bubbles up from your worker functions will return here.
 ```go
-if err := worker.Wait(); err != nil {
+if err := worker.Close(); err != nil {
     //Handle error
 }
 ```
@@ -84,7 +79,7 @@ func NewMyWorker(message string) *MyWorker {
 	return &MyWorker{message}
 }
 
-func (my *MyWorker) Work(w *goworker.Worker) error {
+func (my *MyWorker) Work(w *goworker.Worker, in interface{}) error {
 	fmt.Println(my.message)
 }
 
@@ -102,17 +97,8 @@ and handle it otherwise the errgroup will wait for your worker functions to be f
  // Setting a deadline of 4 hours from now
  deadlineWorker.SetDeadline(time.Now().Add(4 * time.Hour))
 
-func workerFunction(w *worker.Worker) error {
-	for {
-		select {
-		case in := <-w.In():
-			fmt.Println(in)
-			time.Sleep(1 * time.Second)
-		case <-w.IsDone():
-			// due to the nature of errgroups in order to stop the worker from
-			// waiting an error needs to be returned
-			return fmt.Errorf("timeout reached")
-		}
-	}
+func workerFunction(w *worker.Worker, in interface{}) error {
+	fmt.Println(in)
+	time.Sleep(1 * time.Second)
 }
 ```

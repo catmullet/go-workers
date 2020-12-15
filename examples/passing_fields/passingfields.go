@@ -19,13 +19,11 @@ func main() {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	workerOne.Close()
-	if err := workerOne.Wait(); err != nil {
+	if err := workerOne.Close(); err != nil {
 		fmt.Println(err)
 	}
 
-	workerTwo.Close()
-	if err := workerTwo.Wait(); err != nil {
+	if err := workerTwo.Close(); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -49,19 +47,15 @@ func NewWorkerTwo(amountToMultiply int) *WorkerTwo {
 	}
 }
 
-func (wo *WorkerOne) Work(w *worker.Worker) error {
-	for in := range w.In() {
-		total := in.(int) * wo.amountToMultiply
-		fmt.Println(fmt.Printf("%d * %d = %d", in.(int), wo.amountToMultiply, total))
-		w.Out(total)
-	}
+func (wo *WorkerOne) Work(w *worker.Worker, in interface{}) error {
+	total := in.(int) * wo.amountToMultiply
+	fmt.Println(fmt.Sprintf("%d * %d = %d", in.(int), wo.amountToMultiply, total))
+	w.Out(total)
 	return nil
 }
 
-func (wt *WorkerTwo) Work(w *worker.Worker) error {
-	for in := range w.In() {
-		totalFromWorkerOne := in.(int)
-		fmt.Println(fmt.Printf("%d * %d = %d", totalFromWorkerOne, wt.amountToMultiply, totalFromWorkerOne*wt.amountToMultiply))
-	}
+func (wt *WorkerTwo) Work(w *worker.Worker, in interface{}) error {
+	totalFromWorkerOne := in.(int)
+	fmt.Println(fmt.Sprintf("%d * %d = %d", totalFromWorkerOne, wt.amountToMultiply, totalFromWorkerOne*wt.amountToMultiply))
 	return nil
 }

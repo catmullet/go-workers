@@ -16,15 +16,15 @@ func main() {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	workerOne.Close()
-	if err := workerOne.Wait(); err != nil {
+	if err := workerOne.Close(); err != nil {
 		fmt.Println(err)
 	}
 
-	workerTwo.Close()
-	if err := workerTwo.Wait(); err != nil {
+	if err := workerTwo.Close(); err != nil {
 		fmt.Println(err)
 	}
+
+	fmt.Println("finished")
 }
 
 type WorkerOne struct{}
@@ -38,19 +38,15 @@ func NewWorkerTwo() *WorkerTwo {
 	return &WorkerTwo{}
 }
 
-func (wo *WorkerOne) Work(w *worker.Worker) error {
-	for in := range w.In() {
-		total := in.(int) * 2
-		fmt.Println(fmt.Printf("%d * 2 = %d", in.(int), total))
-		w.Out(total)
-	}
+func (wo *WorkerOne) Work(w *worker.Worker, in interface{}) error {
+	total := in.(int) * 2
+	fmt.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+	w.Out(total)
 	return nil
 }
 
-func (wt *WorkerTwo) Work(w *worker.Worker) error {
-	for in := range w.In() {
-		totalFromWorkerOne := in.(int)
-		fmt.Println(fmt.Printf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
-	}
+func (wt *WorkerTwo) Work(w *worker.Worker, in interface{}) error {
+	totalFromWorkerOne := in.(int)
+	fmt.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
 	return nil
 }
