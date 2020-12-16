@@ -88,8 +88,6 @@ worker := worker.NewWorker(ctx, NewMyWorker(), 100).Work()
 
 ### Setting Timeouts or Deadlines
 If your workers needs to stop at a deadline or you just need to have a timeout use the SetTimeout or SetDeadline methods.
-Worker functions backbone is errgroups, because of this when you look for the signal (IsDone() as seen below), you need to return an error
-and handle it otherwise the errgroup will wait for your worker functions to be finish causing deadlock.
 ```go
  // Setting a timeout of 2 seconds
  timeoutWorker.SetTimeout(2 * time.Second)
