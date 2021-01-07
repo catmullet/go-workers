@@ -16,7 +16,7 @@ func main() {
 		timeoutWorker.Send("hello")
 	}
 
-	err := timeoutWorker.Wait()
+	err := timeoutWorker.Close()
 	if err != nil {
 		fmt.Println(err)
 	}
