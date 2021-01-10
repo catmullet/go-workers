@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -19,38 +20,43 @@ type WorkerObject interface {
 // Worker The object to hold all necessary configuration and channels for the worker
 // only accessible by it's methods.
 type Worker struct {
-	numberOfWorkers     int
-	Ctx                 context.Context
-	workerFunction      WorkerObject
-	inChan              chan interface{}
-	outChan             chan interface{}
-	inScalingChan       chan int
-	outScalingChan      chan int
-	lock                *sync.RWMutex
-	timeout             time.Duration
-	cancel              context.CancelFunc
-	sigChan             chan os.Signal
-	errGroup            *errgroup.Group
-	autoScaleWorkersMax int
+	numberOfWorkers               int64
+	Ctx                           context.Context
+	workerFunction                WorkerObject
+	inChan                        chan interface{}
+	outChan                       chan interface{}
+	inScalingChan                 chan int64
+	outScalingChan                chan int64
+	lock                          *sync.RWMutex
+	timeout                       time.Duration
+	cancel                        context.CancelFunc
+	sigChan                       chan os.Signal
+	errGroup                      *errgroup.Group
+	autoScaleWorkersMax           int64
+	availableAutoScaleWorkers     int64
+	autoScaleCooldownMilliseconds int64
+	cooldownChan                  chan int64
 }
 
 // NewWorker factory method to return new Worker
-func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
+func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int64) (worker *Worker) {
 	cctx, cancel := context.WithCancel(ctx)
 	worker = &Worker{
-		numberOfWorkers:     numberOfWorkers,
-		Ctx:                 cctx,
-		workerFunction:      workerFunction,
-		inChan:              make(chan interface{}, numberOfWorkers),
-		inScalingChan:       make(chan int),
-		outScalingChan:      make(chan int),
-		lock:                new(sync.RWMutex),
-		timeout:             time.Duration(0),
-		cancel:              cancel,
-		sigChan:             make(chan os.Signal, 1),
-		autoScaleWorkersMax: 0,
+		numberOfWorkers:               numberOfWorkers,
+		Ctx:                           cctx,
+		workerFunction:                workerFunction,
+		inChan:                        make(chan interface{}, numberOfWorkers),
+		inScalingChan:                 make(chan int64),
+		outScalingChan:                make(chan int64),
+		cooldownChan:                  make(chan int64),
+		lock:                          new(sync.RWMutex),
+		timeout:                       time.Duration(0),
+		cancel:                        cancel,
+		sigChan:                       make(chan os.Signal, 1),
+		autoScaleWorkersMax:           0,
+		availableAutoScaleWorkers:     0,
+		autoScaleCooldownMilliseconds: 300,
 	}
-
 	worker.errGroup, _ = errgroup.WithContext(ctx)
 	return
 }
@@ -60,8 +66,10 @@ func (iw *Worker) Send(in interface{}) {
 	select {
 	case <-iw.IsDone():
 		return
+	case iw.inChan <- in:
 	default:
-		iw.inChan <- in
+		iw.inScalingChan <- 1
+		iw.Send(in)
 	}
 }
 
@@ -79,15 +87,45 @@ func (iw *Worker) Work() *Worker {
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
-	for i := 0; i < iw.numberOfWorkers; i++ {
+	for i := int64(0); i < atomic.LoadInt64(&iw.numberOfWorkers); i++ {
 		iw.addWorker()
+	}
+	iw.autoscaler()
+	return iw
+}
+
+func (iw *Worker) autoscaler() {
+	iw.errGroup.Go(func() error {
+		for {
+			select {
+			case <-iw.IsDone():
+				return context.Canceled
+			case <-iw.inScalingChan:
+				if atomic.LoadInt64(&iw.availableAutoScaleWorkers) > 0 {
+					iw.addBufferedWorker()
+					atomic.AddInt64(&iw.numberOfWorkers, 1)
+					atomic.AddInt64(&iw.availableAutoScaleWorkers, -1)
+				}
+			}
+		}
+	})
+}
+
+func (iw *Worker) WorkerCount() int64 {
+	return atomic.LoadInt64(&iw.numberOfWorkers)
+}
+
+// AddBuffer allows slower workers to increase their ability to catch up to faster workers
+func (iw *Worker) AddBuffer(count int64) *Worker {
+	if count > 0 {
+		atomic.AddInt64(&iw.autoScaleWorkersMax, count)
+		atomic.AddInt64(&iw.availableAutoScaleWorkers, count)
 	}
 	return iw
 }
 
-// AddBuffer allows slower workers to increase their ability to catch up to faster workers
-func (iw *Worker) AddBuffer(buf int) *Worker {
-	iw.autoScaleWorkersMax = buf
+func (iw *Worker) SetBufferTimeoutMS(ms int64) *Worker {
+	atomic.StoreInt64(&iw.autoScaleCooldownMilliseconds, ms)
 	return iw
 }
 
@@ -97,21 +135,44 @@ func (iw *Worker) addWorker() {
 		for {
 			select {
 			case <-iw.IsDone():
+				atomic.AddInt64(&iw.numberOfWorkers, -1)
 				return context.Canceled
 			case in := <-iw.In():
 				err := iw.workerFunction.Work(iw, in)
 				if err != nil {
 					return err
 				}
-			case scale := <-iw.inScalingChan:
-				if iw.autoScaleWorkersMax >= scale {
-					for i := 0; i < scale; i++ {
-						iw.addWorker()
-					}
-				}
 			}
 		}
 	})
+}
+
+// addWorker add a worker to the pool.
+func (iw *Worker) addBufferedWorker() {
+	iw.errGroup.Go(func() error {
+		tm := time.NewTicker(iw.getCooldownMSDuration())
+		for {
+			select {
+			case <-iw.IsDone():
+				atomic.AddInt64(&iw.numberOfWorkers, -1)
+				return context.Canceled
+			case in := <-iw.In():
+				err := iw.workerFunction.Work(iw, in)
+				if err != nil {
+					return err
+				}
+				tm.Reset(iw.getCooldownMSDuration())
+			case <-tm.C:
+				atomic.AddInt64(&iw.numberOfWorkers, -1)
+				atomic.AddInt64(&iw.availableAutoScaleWorkers, 1)
+				return nil
+			}
+		}
+	})
+}
+
+func (iw *Worker) getCooldownMSDuration() time.Duration {
+	return time.Duration(atomic.LoadInt64(&iw.autoScaleCooldownMilliseconds)) * time.Millisecond
 }
 
 // In returns the workers in channel
