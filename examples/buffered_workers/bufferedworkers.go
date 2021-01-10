@@ -10,10 +10,10 @@ import (
 
 func main() {
 	ctx := context.Background()
-	workerOne := worker.NewWorker(ctx, NewWorkerOne(), 10).Work()
+	workerOne := worker.NewWorker(ctx, NewWorkerOne(), 10).AddBuffer(1000).Work()
 	workerTwo := worker.NewWorker(ctx, NewWorkerTwo(), 10).AddBuffer(1000).InFrom(workerOne).Work()
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 

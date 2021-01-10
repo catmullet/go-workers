@@ -1,4 +1,4 @@
-package goworker
+package workers
 
 import (
 	"context"
@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 )
-
-type fields map[interface{}]interface{}
 
 type WorkerObject interface {
 	Work(w *Worker, in interface{}) error
@@ -78,6 +76,7 @@ func (iw *Worker) Send(in interface{}) {
 // InFrom assigns workers out channel to this workers in channel
 func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	for _, worker := range inWorker {
+		worker.outScalingChan = iw.inScalingChan
 		worker.outChan = iw.inChan
 	}
 	return iw
@@ -168,9 +167,8 @@ func (iw *Worker) addBufferedWorker() {
 				atomic.AddInt64(&iw.availableAutoScaleWorkers, 1)
 				return nil
 			}
-		})
-	}
-	return iw
+		}
+	})
 }
 
 func (iw *Worker) getCooldownMSDuration() time.Duration {
@@ -184,12 +182,16 @@ func (iw *Worker) In() chan interface{} {
 
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
-	iw.outChan <- out
+	select {
+	case iw.outChan <- out:
+	default:
+		iw.outScalingChan <- 1
+		iw.Out(out)
+	}
 }
 
-// Wait wait for all the workers to finish up
-// Deprecated: use Close instead
-func (iw *Worker) Wait() (err error) {
+// wait waits for all the workers to finish up
+func (iw *Worker) wait() (err error) {
 	err = iw.errGroup.Wait()
 	return
 }
@@ -223,8 +225,9 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // channel indicating that no more data follows. Thus it makes sense to only close the
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
+	defer close(iw.inChan)
 	iw.Cancel()
-	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
