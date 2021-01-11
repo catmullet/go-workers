@@ -11,7 +11,7 @@ func main() {
 	ctx := context.Background()
 	w := worker.NewWorker(ctx, NewWorker(), 1000).Work()
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		w.Send(rand.Intn(100))
 	}
 
