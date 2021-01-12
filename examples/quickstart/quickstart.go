@@ -9,7 +9,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	w := worker.NewWorker(ctx, NewWorker(), 1000).Work()
+	w := worker.NewWorker(ctx, NewWorker(), 2).Work()
 
 	for i := 0; i < 1000; i++ {
 		w.Send(rand.Intn(100))
