@@ -52,7 +52,12 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
-	iw.inChan <- in
+	select {
+	case <-iw.IsDone():
+		return
+	default:
+		iw.inChan <- in
+	}
 }
 
 // InFrom assigns workers out channel to this workers in channel
@@ -70,26 +75,32 @@ func (iw *Worker) Work() *Worker {
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
 		iw.wg.Add(1)
-		go func() {
+		go func(iw *Worker) {
 			defer iw.wg.Done()
-			for {
-				select {
-				case <-iw.IsDone():
-					return
-				case in := <-iw.inChan:
-					if err := iw.workerFunction.Work(iw, in); err != nil {
-						iw.Do(func() {
-							iw.err = err
-							if iw.cancel != nil {
-								iw.cancel()
-							}
-						})
+			if err := iw.workFunc(); err != nil {
+				iw.Do(func() {
+					iw.err = err
+					if iw.cancel != nil {
+						iw.cancel()
 					}
-				}
+				})
 			}
-		}()
+		}(iw)
 	}
 	return iw
+}
+
+func (iw *Worker) workFunc() error {
+	for {
+		select {
+		case <-iw.IsDone():
+			return nil
+		case in := <-iw.inChan:
+			if err := iw.workerFunction.Work(iw, in); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // In returns the workers in channel
@@ -108,8 +119,11 @@ func (iw *Worker) Out(out interface{}) {
 }
 
 // wait waits for all the workers to finish up
-func (iw *Worker) wait() (err error) {
+func (iw *Worker) Wait() (err error) {
 	iw.wg.Wait()
+	if iw.cancel != nil {
+		iw.cancel()
+	}
 	return iw.err
 }
 
@@ -142,8 +156,8 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // channel indicating that no more data follows. Thus it makes sense to only close the
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
-	iw.cancel()
-	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
+	iw.Cancel()
+	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

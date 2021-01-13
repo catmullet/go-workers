@@ -4,19 +4,16 @@ import (
 	"context"
 	"fmt"
 	worker "github.com/catmullet/go-workers"
-	"github.com/pkg/profile"
 	"math/rand"
 	"time"
 )
 
 func main() {
 	ctx := context.Background()
-
-	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
-	w := worker.NewWorker(ctx, NewWorker(), 1000).Work()
+	w := worker.NewWorker(ctx, NewWorker(), 1).Work()
 
 	t := time.Now()
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		w.Send(rand.Intn(100))
 	}
 
