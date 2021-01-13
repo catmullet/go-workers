@@ -3,12 +3,10 @@ package workers
 import (
 	"context"
 	"errors"
-	"golang.org/x/sync/errgroup"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -20,56 +18,47 @@ type WorkerObject interface {
 // Worker The object to hold all necessary configuration and channels for the worker
 // only accessible by it's methods.
 type Worker struct {
-	numberOfWorkers int64
-	usedWorkers     int64
+	numberOfWorkers int
 	Ctx             context.Context
 	workerFunction  WorkerObject
 	inChan          chan interface{}
 	outChan         chan interface{}
-	inScaleChan     chan int
-	outScaleChan    chan int
-	lock            *sync.RWMutex
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	sigChan         chan os.Signal
-	errGroup        *errgroup.Group
+	err             error
+	wg              sync.WaitGroup
+	sync.Once
 }
 
 // NewWorker factory method to return new Worker
-func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int64) (worker *Worker) {
+func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
 	cctx, cancel := context.WithCancel(ctx)
-	worker = &Worker{
+	if numberOfWorkers < 1 {
+		numberOfWorkers = 1
+	}
+	return &Worker{
 		numberOfWorkers: numberOfWorkers,
-		usedWorkers:     0,
 		Ctx:             cctx,
 		workerFunction:  workerFunction,
-		inChan:          make(chan interface{}),
-		inScaleChan:     make(chan int),
-		lock:            new(sync.RWMutex),
+		inChan:          make(chan interface{}, numberOfWorkers),
 		timeout:         time.Duration(0),
 		cancel:          cancel,
 		sigChan:         make(chan os.Signal, 1),
+		wg:              sync.WaitGroup{},
+		Once:            sync.Once{},
 	}
-
-	worker.errGroup, _ = errgroup.WithContext(ctx)
-	return
 }
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
-	select {
-	case <-iw.IsDone():
-		return
-	default:
-		iw.inChan <- in
-	}
+	iw.inChan <- in
 }
 
 // InFrom assigns workers out channel to this workers in channel
 func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	for _, worker := range inWorker {
 		worker.outChan = iw.inChan
-		worker.outScaleChan = iw.inScaleChan
 	}
 	return iw
 }
@@ -79,35 +68,28 @@ func (iw *Worker) Work() *Worker {
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
-	iw.addWorker()
-	return iw
-}
-
-func (iw *Worker) GetCurrentWorkerCount() int64 {
-	return atomic.LoadInt64(&iw.usedWorkers)
-}
-
-// addWorker add a worker to the pool.
-func (iw *Worker) addWorker() {
-	atomic.AddInt64(&iw.usedWorkers, 1)
-	iw.errGroup.Go(func() error {
-		for {
-			select {
-			case <-iw.IsDone():
-				atomic.AddInt64(&iw.usedWorkers, -1)
-				return context.Canceled
-			case <-iw.inScaleChan:
-				if atomic.LoadInt64(&iw.usedWorkers) < atomic.LoadInt64(&iw.numberOfWorkers) {
-					iw.addWorker()
-				}
-			case in := <-iw.In():
-				err := iw.workerFunction.Work(iw, in)
-				if err != nil {
-					return err
+	for i := 0; i < iw.numberOfWorkers; i++ {
+		iw.wg.Add(1)
+		go func() {
+			defer iw.wg.Done()
+			for {
+				select {
+				case <-iw.IsDone():
+					return
+				case in := <-iw.inChan:
+					if err := iw.workerFunction.Work(iw, in); err != nil {
+						iw.Do(func() {
+							iw.err = err
+							if iw.cancel != nil {
+								iw.cancel()
+							}
+						})
+					}
 				}
 			}
-		}
-	})
+		}()
+	}
+	return iw
 }
 
 // In returns the workers in channel
@@ -117,23 +99,18 @@ func (iw *Worker) In() chan interface{} {
 
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
-	for {
-		select {
-		case <-iw.Ctx.Done():
-			return
-		case iw.outChan <- out:
-			return
-		default:
-			iw.outScaleChan <- 1
-			continue
-		}
+	select {
+	case <-iw.Ctx.Done():
+		return
+	default:
+		iw.outChan <- out
 	}
 }
 
 // wait waits for all the workers to finish up
 func (iw *Worker) wait() (err error) {
-	err = iw.errGroup.Wait()
-	return
+	iw.wg.Wait()
+	return iw.err
 }
 
 // Cancel stops all workers
@@ -165,7 +142,7 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // channel indicating that no more data follows. Thus it makes sense to only close the
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
-	iw.Cancel()
+	iw.cancel()
 	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
