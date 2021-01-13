@@ -1,9 +1,8 @@
-package goworker
+package workers
 
 import (
 	"context"
 	"errors"
-	"golang.org/x/sync/errgroup"
 	"log"
 	"os"
 	"os/signal"
@@ -11,8 +10,6 @@ import (
 	"syscall"
 	"time"
 )
-
-type fields map[interface{}]interface{}
 
 type WorkerObject interface {
 	Work(w *Worker, in interface{}) error
@@ -26,32 +23,31 @@ type Worker struct {
 	workerFunction  WorkerObject
 	inChan          chan interface{}
 	outChan         chan interface{}
-	lock            *sync.RWMutex
 	timeout         time.Duration
 	cancel          context.CancelFunc
-	fields          fields
 	sigChan         chan os.Signal
-	errGroup        *errgroup.Group
+	err             error
+	wg              sync.WaitGroup
+	sync.Once
 }
 
 // NewWorker factory method to return new Worker
 func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
 	cctx, cancel := context.WithCancel(ctx)
-	worker = &Worker{
+	if numberOfWorkers < 1 {
+		numberOfWorkers = 1
+	}
+	return &Worker{
 		numberOfWorkers: numberOfWorkers,
 		Ctx:             cctx,
 		workerFunction:  workerFunction,
-		inChan:          make(chan interface{}),
-		outChan:         make(chan interface{}),
-		lock:            new(sync.RWMutex),
+		inChan:          make(chan interface{}, numberOfWorkers),
 		timeout:         time.Duration(0),
 		cancel:          cancel,
-		fields:          make(fields),
 		sigChan:         make(chan os.Signal, 1),
+		wg:              sync.WaitGroup{},
+		Once:            sync.Once{},
 	}
-
-	worker.errGroup, _ = errgroup.WithContext(ctx)
-	return
 }
 
 // Send wrapper to send interface through workers "in" channel
@@ -78,20 +74,33 @@ func (iw *Worker) Work() *Worker {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
 	for i := 0; i < iw.numberOfWorkers; i++ {
-		iw.errGroup.Go(func() error {
-			for {
-				select {
-				case <-iw.IsDone():
-					return context.Canceled
-				case in := <-iw.In():
-					if err := iw.workerFunction.Work(iw, in); err != nil {
-						return err
+		iw.wg.Add(1)
+		go func(iw *Worker) {
+			defer iw.wg.Done()
+			if err := iw.workFunc(); err != nil {
+				iw.Do(func() {
+					iw.err = err
+					if iw.cancel != nil {
+						iw.cancel()
 					}
-				}
+				})
 			}
-		})
+		}(iw)
 	}
 	return iw
+}
+
+func (iw *Worker) workFunc() error {
+	for {
+		select {
+		case <-iw.IsDone():
+			return nil
+		case in := <-iw.inChan:
+			if err := iw.workerFunction.Work(iw, in); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // In returns the workers in channel
@@ -101,14 +110,21 @@ func (iw *Worker) In() chan interface{} {
 
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
-	iw.outChan <- out
+	select {
+	case <-iw.Ctx.Done():
+		return
+	default:
+		iw.outChan <- out
+	}
 }
 
-// Wait wait for all the workers to finish up
-// Deprecated: use Close instead
-func (iw *Worker) Wait() (err error) {
-	err = iw.errGroup.Wait()
-	return
+// wait waits for all the workers to finish up
+func (iw *Worker) wait() (err error) {
+	iw.wg.Wait()
+	if iw.cancel != nil {
+		iw.cancel()
+	}
+	return iw.err
 }
 
 // Cancel stops all workers
@@ -141,7 +157,7 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
 	iw.Cancel()
-	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
