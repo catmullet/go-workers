@@ -119,7 +119,7 @@ func (iw *Worker) Out(out interface{}) {
 }
 
 // wait waits for all the workers to finish up
-func (iw *Worker) Wait() (err error) {
+func (iw *Worker) wait() (err error) {
 	iw.wg.Wait()
 	if iw.cancel != nil {
 		iw.cancel()
@@ -157,7 +157,7 @@ func (iw *Worker) IsDone() <-chan struct{} {
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
 	iw.Cancel()
-	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
