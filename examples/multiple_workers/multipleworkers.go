@@ -40,13 +40,13 @@ func NewWorkerTwo() *WorkerTwo {
 
 func (wo *WorkerOne) Work(w *worker.Worker, in interface{}) error {
 	total := in.(int) * 2
-	fmt.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+	w.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
 	w.Out(total)
 	return nil
 }
 
 func (wt *WorkerTwo) Work(w *worker.Worker, in interface{}) error {
 	totalFromWorkerOne := in.(int)
-	fmt.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
+	w.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
 	return nil
 }

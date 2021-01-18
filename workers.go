@@ -1,16 +1,19 @@
 package workers
 
 import (
+	"bufio"
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"io"
 	"os"
-	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"sync"
-	"syscall"
 	"time"
 )
 
+// WorkerObject interface to be implemented
 type WorkerObject interface {
 	Work(w *Worker, in interface{}) error
 }
@@ -25,26 +28,25 @@ type Worker struct {
 	outChan         chan interface{}
 	timeout         time.Duration
 	cancel          context.CancelFunc
-	sigChan         chan os.Signal
 	err             error
 	wg              sync.WaitGroup
+	writer          *bufio.Writer
 	sync.Once
 }
 
 // NewWorker factory method to return new Worker
 func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
-	cctx, cancel := context.WithCancel(ctx)
-	if numberOfWorkers < 1 {
-		numberOfWorkers = 1
-	}
+	debug.SetGCPercent(500)
+	c, cancel := context.WithCancel(ctx)
+	numberOfWorkers = getCorrectWorkers(numberOfWorkers)
 	return &Worker{
 		numberOfWorkers: numberOfWorkers,
-		Ctx:             cctx,
+		Ctx:             c,
 		workerFunction:  workerFunction,
 		inChan:          make(chan interface{}, numberOfWorkers),
 		timeout:         time.Duration(0),
 		cancel:          cancel,
-		sigChan:         make(chan os.Signal, 1),
+		writer:          bufio.NewWriter(os.Stdout),
 		wg:              sync.WaitGroup{},
 		Once:            sync.Once{},
 	}
@@ -63,6 +65,7 @@ func (iw *Worker) Send(in interface{}) {
 // InFrom assigns workers out channel to this workers in channel
 func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	for _, worker := range inWorker {
+		upMaxProcs()
 		worker.outChan = iw.inChan
 	}
 	return iw
@@ -70,6 +73,7 @@ func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
+	setDefaultMaxProcs()
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
@@ -90,6 +94,7 @@ func (iw *Worker) Work() *Worker {
 	return iw
 }
 
+// workFunc separated work func from concurrency mess.
 func (iw *Worker) workFunc() error {
 	for {
 		select {
@@ -115,6 +120,42 @@ func (iw *Worker) Out(out interface{}) {
 		return
 	default:
 		iw.outChan <- out
+	}
+}
+
+// getCorrectWorkers don't let oversizing occur on workers
+func getCorrectWorkers(numberOfWorkers int) int {
+	if numberOfWorkers < 1 {
+		numberOfWorkers = 1
+	}
+	if numberOfWorkers > 1000 {
+		numberOfWorkers = 1000
+	}
+	return numberOfWorkers
+}
+
+// DisableAutoMaxProcs sets MaxProcs to default.
+func (iw *Worker) DisableAutoMaxProcs() *Worker {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	return iw
+}
+
+// setDefaultMaxProcs sets the max procs to a default of 1.
+// we are assuming this is the only concurrency the application is
+// going to be using. Why wouldn't you use all or nothing, right?
+// If our assumption was wrong there is always DisableAutoMaxProcs().
+// Hope you know what your doing!
+func setDefaultMaxProcs() {
+	runtime.GOMAXPROCS(1)
+}
+
+// upMaxProcs up the maxProcs by 1. Won't pass max numCPU.
+func upMaxProcs() {
+	prev := runtime.GOMAXPROCS(2)
+	if prev >= 2 {
+		if prev+1 <= runtime.NumCPU() {
+			runtime.GOMAXPROCS(prev + 1)
+		}
 	}
 }
 
@@ -151,6 +192,46 @@ func (iw *Worker) IsDone() <-chan struct{} {
 	return iw.Ctx.Done()
 }
 
+// SetWriterOut sets the writer for the Print* functions
+// (ex.
+// 		f, err := os.Create("output.txt"))
+//		defer f.Close()
+// 		worker.SetWriteOut(f)
+// )
+// If you have to print anything to stdout using the provided
+// Print functions can significantly improve performance by using
+// buffered output.
+func (iw *Worker) SetWriterOut(writer io.Writer) *Worker {
+	iw.writer.Reset(writer)
+	return iw
+}
+
+// Println prints line output of a
+func (iw *Worker) Println(a ...interface{}) {
+	iw.internalBufferFlush()
+	_, _ = iw.writer.WriteString(fmt.Sprintln(a...))
+}
+
+// Printf prints based on format provided and a
+func (iw *Worker) Printf(format string, a ...interface{}) {
+	iw.internalBufferFlush()
+	_, _ = iw.writer.WriteString(fmt.Sprintf(format, a...))
+}
+
+// Print prints output of a
+func (iw *Worker) Print(a ...interface{}) {
+	iw.internalBufferFlush()
+	_, _ = iw.writer.WriteString(fmt.Sprint(a...))
+}
+
+// internalBufferFlush makes sure we haven't used up the available buffer
+// by flushing the buffer when we get below the danger zone.
+func (iw *Worker) internalBufferFlush() {
+	if iw.writer.Available() < 512 {
+		_ = iw.writer.Flush()
+	}
+}
+
 // Close Note that it is only necessary to close a channel if the receiver is
 // looking for a close. Closing the channel is a control signal on the
 // channel indicating that no more data follows. Thus it makes sense to only close the
@@ -158,27 +239,9 @@ func (iw *Worker) IsDone() <-chan struct{} {
 func (iw *Worker) Close() error {
 	iw.Cancel()
 	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
+		_ = iw.writer.Flush()
 		return err
 	}
+	_ = iw.writer.Flush()
 	return nil
-}
-
-// PassTerminationSignal passes signal to workers
-func (iw *Worker) PassTerminationSignal(sig os.Signal) {
-	iw.sigChan <- sig
-}
-
-// SafeShutdown wait for an interrupt or termination signal and
-// if encountered handle clean shut down/cleanup.
-func (iw *Worker) SafeShutdown() *Worker {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func(chan os.Signal) {
-		sig := <-sigChan
-		log.Printf("workers recieved termination signal: %s", sig.String())
-		if err := iw.Close(); err != nil {
-			log.Printf("workers safely shutdown but recieved error: %s", err.Error())
-		}
-	}(sigChan)
-	return iw
 }
