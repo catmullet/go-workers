@@ -11,9 +11,9 @@ func main() {
 	ctx := context.Background()
 	t := time.Now()
 
-	deadlineWorker := worker.NewWorker(ctx, NewDeadlineWorker(), 4).SetDeadline(t.Add(10 * time.Second)).Work()
+	deadlineWorker := worker.NewWorker(ctx, NewDeadlineWorker(), 100).SetDeadline(t.Add(10 * time.Second)).Work()
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10000; i++ {
 		deadlineWorker.Send("hello")
 	}
 

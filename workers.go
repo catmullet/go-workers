@@ -7,8 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
-	"runtime/debug"
+	"os/signal"
 	"sync"
 	"time"
 )
@@ -29,15 +28,16 @@ type Worker struct {
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	err             error
+	closerErr       error
 	wg              sync.WaitGroup
 	writer          *bufio.Writer
+	theCloser       func(w *Worker) error
 	sync.RWMutex
 	sync.Once
 }
 
 // NewWorker factory method to return new Worker
 func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
-	debug.SetGCPercent(500)
 	c, cancel := context.WithCancel(ctx)
 	numberOfWorkers = getCorrectWorkers(numberOfWorkers)
 	return &Worker{
@@ -49,8 +49,8 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		cancel:          cancel,
 		writer:          bufio.NewWriter(os.Stdout),
 		wg:              sync.WaitGroup{},
-		RWMutex:         sync.RWMutex{},
 		Once:            sync.Once{},
+		theCloser:       func(w *Worker) error { return nil },
 	}
 }
 
@@ -67,7 +67,6 @@ func (iw *Worker) Send(in interface{}) {
 // InFrom assigns workers out channel to this workers in channel
 func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 	for _, worker := range inWorker {
-		upMaxProcs()
 		worker.outChan = iw.inChan
 	}
 	return iw
@@ -75,7 +74,7 @@ func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
-	setDefaultMaxProcs()
+	iw.waitForSignal()
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
@@ -103,12 +102,31 @@ func (iw *Worker) workFunc() error {
 		case <-iw.IsDone():
 			return nil
 		case in := <-iw.inChan:
-			if err := iw.workerFunction.Work(iw, in); err != nil &&
-				err != context.Canceled {
+			if err := iw.workerFunction.Work(iw, in); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// closerRun runs the closer func in a wrapper for error return
+func (iw *Worker) closerRun() error {
+	iw.wg.Add(1)
+	go func(iw *Worker) {
+		defer iw.wg.Done()
+		if err := iw.theCloser(iw); err != nil {
+			iw.closerErr = err
+		}
+	}(iw)
+	iw.wg.Wait()
+	return iw.closerErr
+}
+
+// AddCloser adds a function to be run at the end before the worker fully shuts down.
+// this func will block the worker from fully shutting down so "short and sweet"
+func (iw *Worker) AddCloser(f func(w *Worker) error) *Worker {
+	iw.theCloser = f
+	return iw
 }
 
 // In returns the workers in channel
@@ -126,44 +144,30 @@ func (iw *Worker) Out(out interface{}) {
 	}
 }
 
+// waitForSignal make sure we wait for a term signal and shutdown correctly
+func (iw *Worker) waitForSignal() {
+	go func(w *Worker) {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, os.Interrupt, os.Kill)
+		if <-quit; true {
+			w.Cancel()
+		}
+	}(iw)
+}
+
 // getCorrectWorkers don't let oversizing occur on workers
 func getCorrectWorkers(numberOfWorkers int) int {
 	if numberOfWorkers < 1 {
 		numberOfWorkers = 1
 	}
-	if numberOfWorkers > 1000 {
-		numberOfWorkers = 1000
+	if numberOfWorkers > 10000 {
+		numberOfWorkers = 10000
 	}
 	return numberOfWorkers
 }
 
-// DisableAutoMaxProcs sets MaxProcs to default.
-func (iw *Worker) DisableAutoMaxProcs() *Worker {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	return iw
-}
-
-// setDefaultMaxProcs sets the max procs to a default of 1.
-// we are assuming this is the only concurrency the application is
-// going to be using. Why wouldn't you use all or nothing, right?
-// If our assumption was wrong there is always DisableAutoMaxProcs().
-// Hope you know what your doing!
-func setDefaultMaxProcs() {
-	runtime.GOMAXPROCS(1)
-}
-
-// upMaxProcs up the maxProcs by 1. Won't pass max numCPU.
-func upMaxProcs() {
-	prev := runtime.GOMAXPROCS(2)
-	if prev >= 2 {
-		if prev+1 <= runtime.NumCPU() {
-			runtime.GOMAXPROCS(prev + 1)
-		}
-	}
-}
-
-// wait waits for all the workers to finish up
-func (iw *Worker) wait() (err error) {
+// Wait waits for all the workers to finish up
+func (iw *Worker) Wait() (err error) {
 	iw.wg.Wait()
 	if iw.cancel != nil {
 		iw.cancel()
@@ -247,10 +251,13 @@ func (iw *Worker) internalBufferFlush() {
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
 	iw.Cancel()
-	if err := iw.wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		_ = iw.writer.Flush()
 		return err
 	}
 	_ = iw.writer.Flush()
+	if err := iw.closerRun(); err != nil {
+		return err
+	}
 	return nil
 }
