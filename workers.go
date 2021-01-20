@@ -31,6 +31,7 @@ type Worker struct {
 	err             error
 	wg              sync.WaitGroup
 	writer          *bufio.Writer
+	sync.RWMutex
 	sync.Once
 }
 
@@ -48,6 +49,7 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		cancel:          cancel,
 		writer:          bufio.NewWriter(os.Stdout),
 		wg:              sync.WaitGroup{},
+		RWMutex:         sync.RWMutex{},
 		Once:            sync.Once{},
 	}
 }
@@ -101,7 +103,8 @@ func (iw *Worker) workFunc() error {
 		case <-iw.IsDone():
 			return nil
 		case in := <-iw.inChan:
-			if err := iw.workerFunction.Work(iw, in); err != nil {
+			if err := iw.workerFunction.Work(iw, in); err != nil &&
+				err != context.Canceled {
 				return err
 			}
 		}
@@ -208,18 +211,24 @@ func (iw *Worker) SetWriterOut(writer io.Writer) *Worker {
 
 // Println prints line output of a
 func (iw *Worker) Println(a ...interface{}) {
+	iw.Lock()
+	defer iw.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprintln(a...))
 }
 
 // Printf prints based on format provided and a
 func (iw *Worker) Printf(format string, a ...interface{}) {
+	iw.Lock()
+	defer iw.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprintf(format, a...))
 }
 
 // Print prints output of a
 func (iw *Worker) Print(a ...interface{}) {
+	iw.Lock()
+	defer iw.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprint(a...))
 }
