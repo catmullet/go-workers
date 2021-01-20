@@ -32,6 +32,7 @@ type Worker struct {
 	wg              sync.WaitGroup
 	writer          *bufio.Writer
 	theCloser       func(w *Worker) error
+	isStarted       bool
 	sync.RWMutex
 	sync.Once
 }
@@ -92,6 +93,7 @@ func (iw *Worker) Work() *Worker {
 			}
 		}(iw)
 	}
+	iw.isStarted = true
 	return iw
 }
 
@@ -183,14 +185,36 @@ func (iw *Worker) Cancel() {
 // SetDeadline allows a time to be set when the workers should stop.
 // Deadline needs to be handled by the IsDone method.
 func (iw *Worker) SetDeadline(t time.Time) *Worker {
-	iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
+	iw.Lock()
+	defer iw.Unlock()
+	if iw.isStarted {
+		go func() {
+			ctx, cancel := context.WithDeadline(iw.Ctx, t)
+			<-ctx.Done()
+			cancel()
+			iw.cancel()
+		}()
+	} else {
+		iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
+	}
 	return iw
 }
 
 // SetTimeout allows a time duration to be set when the workers should stop.
 // Timeout needs to be handled by the IsDone method.
 func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
-	iw.timeout = duration
+	iw.Lock()
+	defer iw.Unlock()
+	if iw.isStarted {
+		go func() {
+			ctx, cancel := context.WithTimeout(iw.Ctx, duration)
+			<-ctx.Done()
+			cancel()
+			iw.cancel()
+		}()
+	} else {
+		iw.timeout = duration
+	}
 	return iw
 }
 

@@ -10,9 +10,9 @@ import (
 func main() {
 	ctx := context.Background()
 
-	timeoutWorker := worker.NewWorker(ctx, NewTimeoutWorker(), 1000).SetTimeout(2 * time.Second).Work()
+	timeoutWorker := worker.NewWorker(ctx, NewTimeoutWorker(), 10).SetTimeout(100 * time.Millisecond).Work()
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000000; i++ {
 		timeoutWorker.Send("hello")
 	}
 
