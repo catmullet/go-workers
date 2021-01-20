@@ -28,10 +28,8 @@ type Worker struct {
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	err             error
-	closerErr       error
 	wg              sync.WaitGroup
 	writer          *bufio.Writer
-	theCloser       func(w *Worker) error
 	isStarted       bool
 	sync.RWMutex
 	sync.Once
@@ -51,7 +49,6 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		writer:          bufio.NewWriter(os.Stdout),
 		wg:              sync.WaitGroup{},
 		Once:            sync.Once{},
-		theCloser:       func(w *Worker) error { return nil },
 	}
 }
 
@@ -102,33 +99,13 @@ func (iw *Worker) workFunc() error {
 	for {
 		select {
 		case <-iw.IsDone():
-			return nil
+			return context.Canceled
 		case in := <-iw.inChan:
 			if err := iw.workerFunction.Work(iw, in); err != nil {
 				return err
 			}
 		}
 	}
-}
-
-// closerRun runs the closer func in a wrapper for error return
-func (iw *Worker) closerRun() error {
-	iw.wg.Add(1)
-	go func(iw *Worker) {
-		defer iw.wg.Done()
-		if err := iw.theCloser(iw); err != nil {
-			iw.closerErr = err
-		}
-	}(iw)
-	iw.wg.Wait()
-	return iw.closerErr
-}
-
-// AddCloser adds a function to be run at the end before the worker fully shuts down.
-// this func will block the worker from fully shutting down so "short and sweet"
-func (iw *Worker) AddCloser(f func(w *Worker) error) *Worker {
-	iw.theCloser = f
-	return iw
 }
 
 // In returns the workers in channel
@@ -190,9 +167,14 @@ func (iw *Worker) SetDeadline(t time.Time) *Worker {
 	if iw.isStarted {
 		go func() {
 			ctx, cancel := context.WithDeadline(iw.Ctx, t)
-			<-ctx.Done()
-			cancel()
-			iw.cancel()
+			defer cancel()
+			for {
+				select {
+				case <-ctx.Done():
+					iw.Cancel()
+					return
+				}
+			}
 		}()
 	} else {
 		iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
@@ -208,9 +190,14 @@ func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
 	if iw.isStarted {
 		go func() {
 			ctx, cancel := context.WithTimeout(iw.Ctx, duration)
-			<-ctx.Done()
-			cancel()
-			iw.cancel()
+			defer cancel()
+			for {
+				select {
+				case <-ctx.Done():
+					iw.Cancel()
+					return
+				}
+			}
 		}()
 	} else {
 		iw.timeout = duration
@@ -275,12 +262,8 @@ func (iw *Worker) internalBufferFlush() {
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
 	iw.Cancel()
+	defer iw.writer.Flush()
 	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		_ = iw.writer.Flush()
-		return err
-	}
-	_ = iw.writer.Flush()
-	if err := iw.closerRun(); err != nil {
 		return err
 	}
 	return nil
