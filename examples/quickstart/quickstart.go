@@ -22,7 +22,7 @@ func main() {
 	}
 
 	totalTime := time.Since(t).Milliseconds()
-	fmt.Println(fmt.Sprintf("total time %dms", totalTime))
+	fmt.Printf("total time %dms\n", totalTime)
 }
 
 type Worker struct {

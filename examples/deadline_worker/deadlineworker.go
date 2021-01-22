@@ -14,7 +14,7 @@ func main() {
 	deadlineWorker := worker.NewWorker(ctx, NewDeadlineWorker(), 100).
 		SetDeadline(t.Add(200 * time.Millisecond)).Work()
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000000; i++ {
 		deadlineWorker.Send("hello")
 	}
 
