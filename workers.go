@@ -30,7 +30,6 @@ type Worker struct {
 	err             error
 	wg              sync.WaitGroup
 	writer          *bufio.Writer
-	isStarted       bool
 	sync.RWMutex
 	sync.Once
 }
@@ -90,7 +89,6 @@ func (iw *Worker) Work() *Worker {
 			}
 		}(iw)
 	}
-	iw.isStarted = true
 	return iw
 }
 
@@ -164,21 +162,7 @@ func (iw *Worker) Cancel() {
 func (iw *Worker) SetDeadline(t time.Time) *Worker {
 	iw.Lock()
 	defer iw.Unlock()
-	if iw.isStarted {
-		go func() {
-			ctx, cancel := context.WithDeadline(iw.Ctx, t)
-			defer cancel()
-			for {
-				select {
-				case <-ctx.Done():
-					iw.Cancel()
-					return
-				}
-			}
-		}()
-	} else {
-		iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
-	}
+	iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
 	return iw
 }
 
@@ -187,21 +171,7 @@ func (iw *Worker) SetDeadline(t time.Time) *Worker {
 func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
 	iw.Lock()
 	defer iw.Unlock()
-	if iw.isStarted {
-		go func() {
-			ctx, cancel := context.WithTimeout(iw.Ctx, duration)
-			defer cancel()
-			for {
-				select {
-				case <-ctx.Done():
-					iw.Cancel()
-					return
-				}
-			}
-		}()
-	} else {
-		iw.timeout = duration
-	}
+	iw.timeout = duration
 	return iw
 }
 
@@ -262,7 +232,7 @@ func (iw *Worker) internalBufferFlush() {
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
 	iw.Cancel()
-	defer iw.writer.Flush()
+	defer func() { _ = iw.writer.Flush() }()
 	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

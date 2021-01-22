@@ -5,19 +5,24 @@ import (
 	"fmt"
 	worker "github.com/catmullet/go-workers"
 	"math/rand"
+	"time"
 )
 
 func main() {
 	ctx := context.Background()
-	w := worker.NewWorker(ctx, NewWorker(), 100).Work()
+	t := time.Now()
+	w := worker.NewWorker(ctx, NewWorker(), 1000).Work()
 
-	for i := 0; i < 10000000; i++ {
+	for i := 0; i < 1000000; i++ {
 		w.Send(rand.Intn(100))
 	}
 
 	if err := w.Close(); err != nil {
 		fmt.Println(err)
 	}
+
+	totalTime := time.Since(t).Milliseconds()
+	fmt.Println(fmt.Sprintf("total time %dms", totalTime))
 }
 
 type Worker struct {
