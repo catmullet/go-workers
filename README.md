@@ -58,7 +58,7 @@ workerOne := worker.NewWorker(ctx, NewMyWorker(), 100).Work()
 workerTwo := worker.NewWorker(ctx, NewMyWorkerTwo(), 100).InFrom(workerOne).Work()
 ```
 ### Accepting output from multiple workers
-It is possible to accept output from more than one worker but it is up to you to determine what is coming from which worker.
+It is possible to accept output from more than one worker but it is up to you to determine what is coming from which worker.  (They will send on the same channel.)
 ```go
 workerOne := worker.NewWorker(ctx, NewMyWorker(), 100).Work()
 workerTwo := worker.NewWorker(ctx, NewMyWorkerTwo(), 100).Work()
@@ -67,7 +67,7 @@ workerThree := worker.NewWorker(ctx, NewMyWorkerThree(), 100).InFrom(workerOne, 
 
 ## Passing Fields To Workers
 ### Adding Values
-Fields can be passed via the workers object.
+Fields can be passed via the workers object. Be sure as with any concurrency in Golang that your variables are concurrent safe.  Most often the golang documentation will state the package or parts of it are concurrent safe.  If it does not state so there is a good chance it isn't.  Use the sync package to lock and unlock for writes on unsafe variables.  (It is good practice NOT to defer in the work function.)
 
 <img src="https://raw.githubusercontent.com/catmullet/go-workers/assets/constworker2.png" alt="worker" width="35"/> **ONLY** use the `Send()` method to get data into your worker. It is not shared memory unlike the worker objects values.
 ```go
@@ -87,7 +87,7 @@ worker := worker.NewWorker(ctx, NewMyWorker(), 100).Work()
 ```
 
 ### Setting Timeouts or Deadlines
-If your workers needs to stop at a deadline or you just need to have a timeout use the SetTimeout or SetDeadline methods.
+If your workers needs to stop at a deadline or you just need to have a timeout use the SetTimeout or SetDeadline methods. (These must be in place before setting the workers off to work.)
 ```go
  // Setting a timeout of 2 seconds
  timeoutWorker.SetTimeout(2 * time.Second)
@@ -100,3 +100,21 @@ func workerFunction(w *worker.Worker, in interface{}) error {
 	time.Sleep(1 * time.Second)
 }
 ```
+
+
+## Performance Hints
+### Buffered Writer
+If you want to write out to a file or just stdout you can use SetWriterOut(writer io.Writer).  The worker will have the following methods available
+```go
+worker.Println()
+worker.Printf()
+worker.Print()
+```
+The workers use a buffered writer for output and can be up to 3 times faster than the fmt package.  Just be mindful it won't write out to the console as quickly as an unbuffered writer.  It will sync and eventually flush everything at the end, making it ideal for writing out to a file.
+
+### Using GOGC env variable
+If your application is based solely around using workers, consider upping the percentage of when the scheduler will garbage collect. (ex. GOGC=200) 200% -> 300% is a good starting point. Make sure your machine has some good memory behind it.
+By upping the percentage your application will interupt the workers less, meaning they get more work done.  However, be aware of the rest of your applications needs when modifying this variable.
+
+### Using GOMAXPROCS env variable
+For workers that run quick bursts of lots of simple data consider lowering the GOMAXPROCS.  Be carfeful though, this can affect your entire applicaitons performance.  Profile your application and benchmark it.  See where your application runs best.
