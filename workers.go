@@ -9,7 +9,15 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
+)
+
+const (
+	internalBufferFlushLimit = 512
+	maxNumberOfWorkersLimit  = 10000
+	minNumberOfWorkersLimit  = 1
+	signalChannelBufferSize  = 1
 )
 
 // WorkerObject interface to be implemented
@@ -20,17 +28,17 @@ type WorkerObject interface {
 // Worker The object to hold all necessary configuration and channels for the worker
 // only accessible by it's methods.
 type Worker struct {
-	numberOfWorkers int
 	Ctx             context.Context
 	workerFunction  WorkerObject
+	err             error
+	numberOfWorkers int
 	inChan          chan interface{}
 	outChan         chan interface{}
 	timeout         time.Duration
 	cancel          context.CancelFunc
-	err             error
-	wg              sync.WaitGroup
 	writer          *bufio.Writer
 	sync.RWMutex
+	wg sync.WaitGroup
 	sync.Once
 }
 
@@ -47,6 +55,7 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		cancel:          cancel,
 		writer:          bufio.NewWriter(os.Stdout),
 		wg:              sync.WaitGroup{},
+		RWMutex:         sync.RWMutex{},
 		Once:            sync.Once{},
 	}
 }
@@ -100,7 +109,7 @@ func (iw *Worker) workFunc() error {
 			return context.Canceled
 		case in := <-iw.inChan:
 			if err := iw.workerFunction.Work(iw, in); err != nil {
-				return err
+				return fmt.Errorf("worker function returned err: %w", err)
 			}
 		}
 	}
@@ -124,8 +133,8 @@ func (iw *Worker) Out(out interface{}) {
 // waitForSignal make sure we wait for a term signal and shutdown correctly
 func (iw *Worker) waitForSignal() {
 	go func(w *Worker) {
-		quit := make(chan os.Signal, 1)
-		signal.Notify(quit, os.Interrupt, os.Kill)
+		quit := make(chan os.Signal, signalChannelBufferSize)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		if <-quit; true {
 			w.Cancel()
 		}
@@ -134,11 +143,14 @@ func (iw *Worker) waitForSignal() {
 
 // getCorrectWorkers don't let oversizing occur on workers
 func getCorrectWorkers(numberOfWorkers int) int {
-	if numberOfWorkers < 1 {
-		numberOfWorkers = 1
+	if numberOfWorkers < minNumberOfWorkersLimit {
+		numberOfWorkers = minNumberOfWorkersLimit
 	}
-	if numberOfWorkers > 10000 {
-		numberOfWorkers = 10000
+
+	// make sure if we are over 10000 we don't create unintended
+	// consequences
+	if numberOfWorkers > maxNumberOfWorkersLimit {
+		numberOfWorkers = maxNumberOfWorkersLimit
 	}
 	return numberOfWorkers
 }
@@ -221,7 +233,7 @@ func (iw *Worker) Print(a ...interface{}) {
 // internalBufferFlush makes sure we haven't used up the available buffer
 // by flushing the buffer when we get below the danger zone.
 func (iw *Worker) internalBufferFlush() {
-	if iw.writer.Available() < 512 {
+	if iw.writer.Available() < internalBufferFlushLimit {
 		_ = iw.writer.Flush()
 	}
 }

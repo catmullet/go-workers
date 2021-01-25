@@ -1,3 +1,5 @@
+// +build ignore
+
 package main
 
 import (
@@ -34,6 +36,6 @@ func NewWorker() *Worker {
 
 func (wo *Worker) Work(w *worker.Worker, in interface{}) error {
 	total := in.(int) * 2
-	w.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+	defer w.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
 	return nil
 }
