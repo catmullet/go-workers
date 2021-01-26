@@ -136,7 +136,7 @@ func (iw *Worker) waitForSignal() {
 		quit := make(chan os.Signal, signalChannelBufferSize)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		if <-quit; true {
-			w.Cancel()
+			w.cancel()
 		}
 	}(iw)
 }
@@ -162,11 +162,6 @@ func (iw *Worker) Wait() (err error) {
 		iw.cancel()
 	}
 	return iw.err
-}
-
-// Cancel stops all workers
-func (iw *Worker) Cancel() {
-	iw.cancel()
 }
 
 // SetDeadline allows a time to be set when the workers should stop.
@@ -243,7 +238,7 @@ func (iw *Worker) internalBufferFlush() {
 // channel indicating that no more data follows. Thus it makes sense to only close the
 // in channel on the worker. For now we will just send the cancel signal
 func (iw *Worker) Close() error {
-	iw.Cancel()
+	iw.cancel()
 	defer func() { _ = iw.writer.Flush() }()
 	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
