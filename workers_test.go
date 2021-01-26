@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"testing"
@@ -26,6 +27,30 @@ var (
 			name:         "work basic",
 			workerObject: NewTestWorkerObject(workBasic()),
 			numWorkers:   workerCount,
+		},
+		{
+			name:         "work basic with Println",
+			workerObject: NewTestWorkerObject(workBasicPrintln()),
+			numWorkers:   workerCount,
+		},
+		{
+			name:         "work basic with Printf",
+			workerObject: NewTestWorkerObject(workBasicPrintf()),
+			numWorkers:   workerCount,
+		}, {
+			name:         "work basic with Print",
+			workerObject: NewTestWorkerObject(workBasicPrint()),
+			numWorkers:   workerCount,
+		},
+		{
+			name:         "work basic less than minimum worker count",
+			workerObject: NewTestWorkerObject(workBasic()),
+			numWorkers:   0,
+		},
+		{
+			name:         "work basic more than maximum worker count",
+			workerObject: NewTestWorkerObject(workBasic()),
+			numWorkers:   20000,
 		},
 		{
 			name:         "work basic with timeout",
@@ -101,11 +126,34 @@ func workBasicNoOut() func(w *Worker, in interface{}) error {
 	}
 }
 
+func workBasicPrintln() func(w *Worker, in interface{}) error {
+	return func(w *Worker, in interface{}) error {
+		i := in.(int)
+		w.Println(i)
+		return nil
+	}
+}
+
+func workBasicPrintf() func(w *Worker, in interface{}) error {
+	return func(w *Worker, in interface{}) error {
+		i := in.(int)
+		w.Printf("test_number:%d", i)
+		return nil
+	}
+}
+
+func workBasicPrint() func(w *Worker, in interface{}) error {
+	return func(w *Worker, in interface{}) error {
+		i := in.(int)
+		w.Print(i)
+		return nil
+	}
+}
+
 func workBasic() func(w *Worker, in interface{}) error {
 	return func(w *Worker, in interface{}) error {
 		i := in.(int)
-		total := i * rand.Intn(1000)
-		w.Out(total)
+		w.Out(i)
 		return nil
 	}
 }
@@ -114,7 +162,7 @@ func workWithError(err error) func(w *Worker, in interface{}) error {
 	return func(w *Worker, in interface{}) error {
 		i := in.(int)
 		total := i * rand.Intn(1000)
-		if i == 1000 {
+		if i == 100 {
 			return err
 		}
 		w.Out(total)
@@ -130,25 +178,26 @@ func TestMain(m *testing.M) {
 }
 
 func TestWorkers(t *testing.T) {
+	f, err := os.Create(filepath.Join(os.TempDir(), "testfile.txt"))
+	if err != nil {
+		t.Fail()
+	}
 	for _, tt := range workerTestScenarios {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			workerOne := getWorker(ctx, tt).Work()
+			workerOne := getWorker(ctx, tt).SetWriterOut(f).Work()
 			// always need a consumer for the out tests so using basic here.
 			workerTwo := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount)
 			workerTwo.InFrom(workerOne).Work()
 
-			for i := 0; i < 10000000; i++ {
+			for i := 0; i < 10000; i++ {
 				workerOne.Send(i)
 			}
 
-			fmt.Println(tt.name, " waiting on worker one to close...")
 			if err := workerOne.Close(); !assert.Equal(t, tt.errExpected, err != nil) {
 				fmt.Println(err)
 				t.Fail()
 			}
-
-			fmt.Println(tt.name, " waiting on worker two to close...")
 			if err := workerTwo.Close(); !assert.NoError(t, err) {
 				fmt.Println(err)
 				t.Fail()
