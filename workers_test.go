@@ -37,7 +37,8 @@ var (
 			name:         "work basic with Printf",
 			workerObject: NewTestWorkerObject(workBasicPrintf()),
 			numWorkers:   workerCount,
-		}, {
+		},
+		{
 			name:         "work basic with Print",
 			workerObject: NewTestWorkerObject(workBasicPrint()),
 			numWorkers:   workerCount,
@@ -104,6 +105,7 @@ type workerTest struct {
 	deadline     func() time.Time
 	workerObject WorkerObject
 	numWorkers   int
+	testSignal   bool
 	errExpected  bool
 }
 
@@ -190,7 +192,7 @@ func TestWorkers(t *testing.T) {
 			workerTwo := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount)
 			workerTwo.InFrom(workerOne).Work()
 
-			for i := 0; i < 10000; i++ {
+			for i := 0; i < 100000; i++ {
 				workerOne.Send(i)
 			}
 

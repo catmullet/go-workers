@@ -34,6 +34,7 @@ type Worker struct {
 	numberOfWorkers int
 	inChan          chan interface{}
 	outChan         chan interface{}
+	sigChan         chan os.Signal
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	writer          *bufio.Writer
@@ -51,6 +52,7 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		Ctx:             c,
 		workerFunction:  workerFunction,
 		inChan:          make(chan interface{}, numberOfWorkers),
+		sigChan:         make(chan os.Signal, signalChannelBufferSize),
 		timeout:         time.Duration(0),
 		cancel:          cancel,
 		writer:          bufio.NewWriter(os.Stdout),
@@ -127,13 +129,13 @@ func (iw *Worker) Out(out interface{}) {
 
 // waitForSignal make sure we wait for a term signal and shutdown correctly
 func (iw *Worker) waitForSignal() {
-	go func(w *Worker) {
-		quit := make(chan os.Signal, signalChannelBufferSize)
-		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-		if <-quit; true {
-			w.cancel()
+	go func() {
+		signal.Notify(iw.sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-iw.sigChan
+		if iw.cancel != nil {
+			iw.cancel()
 		}
-	}(iw)
+	}()
 }
 
 // getCorrectWorkers don't let oversizing occur on workers
