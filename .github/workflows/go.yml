@@ -23,7 +23,4 @@ jobs:
 
     - name: Test
       run: go test -v ./...
-    
-    - name: Go proxy warming
-      uses: andrewslotin/go-proxy-pull-action@v1.0.1
 
