@@ -13,3 +13,6 @@ jobs:
     steps:
     - name: Pull new module version
       uses: andrewslotin/go-proxy-pull-action@master
+    - name: actions-goveralls
+      uses: shogo82148/actions-goveralls@v1.4.2
+
