@@ -115,11 +115,6 @@ func (iw *Worker) workFunc() error {
 	}
 }
 
-// In returns the workers in channel
-func (iw *Worker) In() chan interface{} {
-	return iw.inChan
-}
-
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
 	select {
