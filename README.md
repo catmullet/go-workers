@@ -1,5 +1,6 @@
 ![go workers](https://raw.githubusercontent.com/catmullet/go-workers/assets/constworker_header_anim.gif)
 
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge-flat.svg)](https://github.com/avelino/awesome-go#goroutines)
 [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) [![Go Report Card](https://goreportcard.com/badge/github.com/catmullet/go-workers)](https://goreportcard.com/report/github.com/catmullet/go-workers)
 [![GoCover](http://gocover.io/_badge/github.com/catmullet/go-workers)](http://gocover.io/github.com/catmullet/go-workers)
 [![Go Reference](https://pkg.go.dev/badge/github.com/catmullet/go-workers.svg)](https://pkg.go.dev/github.com/catmullet/go-workers)
