@@ -64,11 +64,13 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
-	select {
-	case <-iw.IsDone():
-		return
-	default:
-		iw.inChan <- in
+	for {
+		select {
+		case <-iw.IsDone():
+			return
+		case iw.inChan <- in:
+			return
+		}
 	}
 }
 
@@ -119,11 +121,13 @@ func (iw *Worker) workFunc() error {
 
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
-	select {
-	case <-iw.Ctx.Done():
-		return
-	default:
-		iw.outChan <- out
+	for {
+		select {
+		case <-iw.Ctx.Done():
+			return
+		case iw.outChan <- out:
+			return
+		}
 	}
 }
 
