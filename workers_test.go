@@ -192,7 +192,7 @@ func workWithError(err error) func(w *Worker, in interface{}) error {
 
 func TestMain(m *testing.M) {
 	debug.SetGCPercent(500)
-	runtime.GOMAXPROCS(3)
+	runtime.GOMAXPROCS(2)
 	code := m.Run()
 	os.Exit(code)
 }
