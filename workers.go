@@ -89,7 +89,7 @@ func (iw *Worker) Work() *Worker {
 		for {
 			select {
 			case <-iw.IsDone():
-				if len(iw.outChan) > 0 {
+				if len(iw.inChan) > 0 {
 					continue
 				}
 				if iw.err == nil {
@@ -97,7 +97,9 @@ func (iw *Worker) Work() *Worker {
 				}
 				return
 			case in := <-iw.inChan:
+				iw.wg.Add(1)
 				go func(in interface{}) {
+					defer iw.wg.Done()
 					if err := iw.workerFunction.Work(iw, in); err != nil {
 						iw.once.Do(func() {
 							iw.err = err
