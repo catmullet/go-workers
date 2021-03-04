@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"os"
 	"os/signal"
@@ -14,7 +15,6 @@ import (
 
 const (
 	internalBufferFlushLimit = 512
-	minNumberOfWorkersLimit  = 1
 	signalChannelBufferSize  = 1
 )
 
@@ -29,9 +29,10 @@ type Worker struct {
 	Ctx             context.Context
 	workerFunction  WorkerObject
 	err             error
-	numberOfWorkers int
+	numberOfWorkers int64
 	inChan          chan interface{}
 	outChan         chan interface{}
+	sema            *semaphore.Weighted
 	sigChan         chan os.Signal
 	timeout         time.Duration
 	cancel          context.CancelFunc
@@ -42,14 +43,14 @@ type Worker struct {
 }
 
 // NewWorker factory method to return new Worker
-func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int) (worker *Worker) {
+func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int64) (worker *Worker) {
 	c, cancel := context.WithCancel(ctx)
-	numberOfWorkers = getCorrectWorkers(numberOfWorkers)
 	return &Worker{
 		numberOfWorkers: numberOfWorkers,
 		Ctx:             c,
 		workerFunction:  workerFunction,
 		inChan:          make(chan interface{}, numberOfWorkers),
+		sema:            semaphore.NewWeighted(numberOfWorkers),
 		sigChan:         make(chan os.Signal, signalChannelBufferSize),
 		timeout:         time.Duration(0),
 		cancel:          cancel,
@@ -83,12 +84,14 @@ func (iw *Worker) Work() *Worker {
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
+	iw.wg.Add(1)
 	go func() {
-		iw.wg.Add(1)
 		defer iw.wg.Done()
+		var wg = new(sync.WaitGroup)
 		for {
 			select {
 			case <-iw.IsDone():
+				wg.Wait()
 				if len(iw.inChan) > 0 {
 					continue
 				}
@@ -97,9 +100,14 @@ func (iw *Worker) Work() *Worker {
 				}
 				return
 			case in := <-iw.inChan:
-				iw.wg.Add(1)
+				err := iw.sema.Acquire(iw.Ctx, 1)
+				if err != nil {
+					return
+				}
+				wg.Add(1)
 				go func(in interface{}) {
-					defer iw.wg.Done()
+					defer wg.Done()
+					defer iw.sema.Release(1)
 					if err := iw.workerFunction.Work(iw, in); err != nil {
 						iw.once.Do(func() {
 							iw.err = err
@@ -107,6 +115,7 @@ func (iw *Worker) Work() *Worker {
 								iw.cancel()
 							}
 						})
+						return
 					}
 				}(in)
 			}
@@ -142,15 +151,6 @@ func (iw *Worker) waitForSignal(signals ...os.Signal) {
 			iw.cancel()
 		}
 	}()
-}
-
-// getCorrectWorkers don't let oversizing occur on workers
-func getCorrectWorkers(numberOfWorkers int) int {
-	if numberOfWorkers < minNumberOfWorkersLimit {
-		numberOfWorkers = minNumberOfWorkersLimit
-	}
-
-	return numberOfWorkers
 }
 
 // Wait waits for all the workers to finish up
