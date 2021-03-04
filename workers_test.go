@@ -4,19 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/panjf2000/ants"
 	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 )
 
 const (
-	workerCount   = 1000
+	workerCount   = 10000
 	workerTimeout = time.Millisecond * 300
+
+	//ants values
+	RunTimes      = 1000000
+	BenchAntsSize = 200000
 )
 
 var (
@@ -85,6 +91,11 @@ var (
 			errExpected:  true,
 			numWorkers:   workerCount,
 		},
+		{
+			name:         "ants comparison pool test",
+			workerObject: NewTestWorkerObject(antsPoolTest()),
+			numWorkers:   50000,
+		},
 	}
 
 	getWorker = func(ctx context.Context, wt workerTest) *Worker {
@@ -152,6 +163,13 @@ func workBasicPrint() func(w *Worker, in interface{}) error {
 	}
 }
 
+func antsPoolTest() func(w *Worker, in interface{}) error {
+	return func(w *Worker, in interface{}) error {
+		//time.Sleep(time.Duration(BenchParam) * time.Millisecond)
+		return nil
+	}
+}
+
 func workBasic() func(w *Worker, in interface{}) error {
 	return func(w *Worker, in interface{}) error {
 		i := in.(int)
@@ -174,7 +192,7 @@ func workWithError(err error) func(w *Worker, in interface{}) error {
 
 func TestMain(m *testing.M) {
 	debug.SetGCPercent(500)
-	runtime.GOMAXPROCS(2)
+	runtime.GOMAXPROCS(3)
 	code := m.Run()
 	os.Exit(code)
 }
@@ -192,7 +210,7 @@ func TestWorkers(t *testing.T) {
 			workerTwo := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount)
 			workerTwo.InFrom(workerOne).Work()
 
-			for i := 0; i < 100000; i++ {
+			for i := 0; i < RunTimes; i++ {
 				workerOne.Send(i)
 			}
 
@@ -206,4 +224,37 @@ func TestWorkers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func BenchmarkAntsPool(b *testing.B) {
+	var wg sync.WaitGroup
+	p, _ := ants.NewPool(BenchAntsSize)
+	defer p.Release()
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(RunTimes)
+		for j := 0; j < RunTimes; j++ {
+			_ = p.Submit(func() {
+				antsPoolTest()
+				wg.Done()
+			})
+		}
+		wg.Wait()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkGoWorkers(b *testing.B) {
+	ctx := context.Background()
+	worker := NewWorker(ctx, NewTestWorkerObject(antsPoolTest()), BenchAntsSize).Work()
+	defer worker.Close()
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < RunTimes; j++ {
+			worker.Send(j)
+		}
+	}
+	b.StopTimer()
 }
