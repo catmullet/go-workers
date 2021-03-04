@@ -89,6 +89,12 @@ func (iw *Worker) Work() *Worker {
 		for {
 			select {
 			case <-iw.IsDone():
+				if len(iw.outChan) > 0 {
+					continue
+				}
+				if iw.err == nil {
+					iw.err = context.Canceled
+				}
 				return
 			case in := <-iw.inChan:
 				go func(in interface{}) {
@@ -148,11 +154,6 @@ func getCorrectWorkers(numberOfWorkers int) int {
 // Wait waits for all the workers to finish up
 func (iw *Worker) Wait() (err error) {
 	iw.wg.Wait()
-	for {
-		if len(iw.outChan) == 0 {
-			break
-		}
-	}
 	if iw.cancel != nil {
 		iw.cancel()
 	}
