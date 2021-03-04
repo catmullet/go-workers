@@ -50,16 +50,6 @@ var (
 			numWorkers:   workerCount,
 		},
 		{
-			name:         "work basic less than minimum worker count",
-			workerObject: NewTestWorkerObject(workBasic()),
-			numWorkers:   0,
-		},
-		{
-			name:         "work basic more than maximum worker count",
-			workerObject: NewTestWorkerObject(workBasic()),
-			numWorkers:   20000,
-		},
-		{
 			name:         "work basic with timeout",
 			timeout:      workerTimeout,
 			workerObject: NewTestWorkerObject(workBasic()),
@@ -115,7 +105,7 @@ type workerTest struct {
 	timeout      time.Duration
 	deadline     func() time.Time
 	workerObject WorkerObject
-	numWorkers   int
+	numWorkers   int64
 	testSignal   bool
 	errExpected  bool
 }
