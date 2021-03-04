@@ -9,13 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 )
 
 const (
 	internalBufferFlushLimit = 512
-	maxNumberOfWorkersLimit  = 10000
 	minNumberOfWorkersLimit  = 1
 	signalChannelBufferSize  = 1
 )
@@ -38,9 +36,9 @@ type Worker struct {
 	timeout         time.Duration
 	cancel          context.CancelFunc
 	writer          *bufio.Writer
-	sync.RWMutex
-	wg sync.WaitGroup
-	sync.Once
+	mu              *sync.RWMutex
+	wg              *sync.WaitGroup
+	once            *sync.Once
 }
 
 // NewWorker factory method to return new Worker
@@ -56,21 +54,19 @@ func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers
 		timeout:         time.Duration(0),
 		cancel:          cancel,
 		writer:          bufio.NewWriter(os.Stdout),
-		wg:              sync.WaitGroup{},
-		RWMutex:         sync.RWMutex{},
-		Once:            sync.Once{},
+		wg:              new(sync.WaitGroup),
+		mu:              new(sync.RWMutex),
+		once:            new(sync.Once),
 	}
 }
 
 // Send wrapper to send interface through workers "in" channel
 func (iw *Worker) Send(in interface{}) {
-	for {
-		select {
-		case <-iw.IsDone():
-			return
-		case iw.inChan <- in:
-			return
-		}
+	select {
+	case <-iw.IsDone():
+		return
+	case iw.inChan <- in:
+		return
 	}
 }
 
@@ -84,57 +80,55 @@ func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
 
 // Work start up the number of workers specified by the numberOfWorkers variable
 func (iw *Worker) Work() *Worker {
-	iw.waitForSignal()
 	if iw.timeout > 0 {
 		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
 	}
-	for i := 0; i < iw.numberOfWorkers; i++ {
+	go func() {
 		iw.wg.Add(1)
-		go func(iw *Worker) {
-			defer iw.wg.Done()
-			if err := iw.workFunc(); err != nil {
-				iw.Do(func() {
-					iw.err = err
-					if iw.cancel != nil {
-						iw.cancel()
+		defer iw.wg.Done()
+		for {
+			select {
+			case <-iw.IsDone():
+				return
+			case in := <-iw.inChan:
+				go func(in interface{}) {
+					if err := iw.workerFunction.Work(iw, in); err != nil {
+						iw.once.Do(func() {
+							iw.err = err
+							if iw.cancel != nil {
+								iw.cancel()
+							}
+						})
 					}
-				})
-			}
-		}(iw)
-	}
-	return iw
-}
-
-// workFunc separated work func from concurrency mess.
-func (iw *Worker) workFunc() error {
-	for {
-		select {
-		case <-iw.IsDone():
-			return context.Canceled
-		case in := <-iw.inChan:
-			if err := iw.workerFunction.Work(iw, in); err != nil {
-				return fmt.Errorf("worker function returned err: %w", err)
+				}(in)
 			}
 		}
-	}
+	}()
+	return iw
 }
 
 // Out pushes value to workers out channel
 func (iw *Worker) Out(out interface{}) {
-	for {
-		select {
-		case <-iw.Ctx.Done():
-			return
-		case iw.outChan <- out:
-			return
-		}
+	select {
+	case <-iw.Ctx.Done():
+		return
+	case iw.outChan <- out:
+		return
 	}
 }
 
+// CancelOnSignal will send cancel to workers when signals specified are received
+func (iw *Worker) CancelOnSignal(signals ...os.Signal) *Worker {
+	if len(signals) > 0 {
+		iw.waitForSignal(signals...)
+	}
+	return iw
+}
+
 // waitForSignal make sure we wait for a term signal and shutdown correctly
-func (iw *Worker) waitForSignal() {
+func (iw *Worker) waitForSignal(signals ...os.Signal) {
 	go func() {
-		signal.Notify(iw.sigChan, syscall.SIGINT, syscall.SIGTERM)
+		signal.Notify(iw.sigChan, signals...)
 		<-iw.sigChan
 		if iw.cancel != nil {
 			iw.cancel()
@@ -148,17 +142,17 @@ func getCorrectWorkers(numberOfWorkers int) int {
 		numberOfWorkers = minNumberOfWorkersLimit
 	}
 
-	// make sure if we are over 10000 we don't create unintended
-	// consequences
-	if numberOfWorkers > maxNumberOfWorkersLimit {
-		numberOfWorkers = maxNumberOfWorkersLimit
-	}
 	return numberOfWorkers
 }
 
 // Wait waits for all the workers to finish up
 func (iw *Worker) Wait() (err error) {
 	iw.wg.Wait()
+	for {
+		if len(iw.outChan) == 0 {
+			break
+		}
+	}
 	if iw.cancel != nil {
 		iw.cancel()
 	}
@@ -168,8 +162,8 @@ func (iw *Worker) Wait() (err error) {
 // SetDeadline allows a time to be set when the workers should stop.
 // Deadline needs to be handled by the IsDone method.
 func (iw *Worker) SetDeadline(t time.Time) *Worker {
-	iw.Lock()
-	defer iw.Unlock()
+	iw.mu.Lock()
+	defer iw.mu.Unlock()
 	iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
 	return iw
 }
@@ -177,8 +171,8 @@ func (iw *Worker) SetDeadline(t time.Time) *Worker {
 // SetTimeout allows a time duration to be set when the workers should stop.
 // Timeout needs to be handled by the IsDone method.
 func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
-	iw.Lock()
-	defer iw.Unlock()
+	iw.mu.Lock()
+	defer iw.mu.Unlock()
 	iw.timeout = duration
 	return iw
 }
@@ -204,24 +198,24 @@ func (iw *Worker) SetWriterOut(writer io.Writer) *Worker {
 
 // Println prints line output of a
 func (iw *Worker) Println(a ...interface{}) {
-	iw.Lock()
-	defer iw.Unlock()
+	iw.mu.Lock()
+	defer iw.mu.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprintln(a...))
 }
 
 // Printf prints based on format provided and a
 func (iw *Worker) Printf(format string, a ...interface{}) {
-	iw.Lock()
-	defer iw.Unlock()
+	iw.mu.Lock()
+	defer iw.mu.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprintf(format, a...))
 }
 
 // Print prints output of a
 func (iw *Worker) Print(a ...interface{}) {
-	iw.Lock()
-	defer iw.Unlock()
+	iw.mu.Lock()
+	defer iw.mu.Unlock()
 	iw.internalBufferFlush()
 	_, _ = iw.writer.WriteString(fmt.Sprint(a...))
 }
