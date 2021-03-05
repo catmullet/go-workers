@@ -18,6 +18,12 @@ const (
 	signalChannelBufferSize  = 1
 )
 
+var (
+	// Exported variables
+	// ErrOutChannelUpdate When the output channel is not able to be updated.
+	ErrOutChannelUpdate = errors.New("out channel already set")
+)
+
 // WorkerObject interface to be implemented
 type WorkerObject interface {
 	Work(w *Worker, in interface{}) error
@@ -122,6 +128,21 @@ func (iw *Worker) Work() *Worker {
 		}
 	}()
 	return iw
+}
+
+// OutChannel Sets the workers output channel to one provided.
+// If the worker already has a child worker attached this function will return an error (workers.ErrOutChannelUpdate).
+func (iw *Worker) OutChannel(out chan interface{}) error {
+	if iw.outChan != nil {
+		return ErrOutChannelUpdate
+	}
+	iw.outChan = out
+	return nil
+}
+
+// InChannel Returns the workers intake channel for use with legacy systems, otherwise use workers Send() method.
+func (iw *Worker) InChannel() chan interface{} {
+	return iw.inChan
 }
 
 // Out pushes value to workers out channel
