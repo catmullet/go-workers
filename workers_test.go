@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/panjf2000/ants"
-	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"sync"
 	"testing"
 	"time"
 )
@@ -19,10 +16,7 @@ import (
 const (
 	workerCount   = 10000
 	workerTimeout = time.Millisecond * 300
-
-	//ants values
 	RunTimes      = 1000000
-	BenchAntsSize = 200000
 )
 
 var (
@@ -80,11 +74,6 @@ var (
 			workerObject: NewTestWorkerObject(workWithError(err)),
 			errExpected:  true,
 			numWorkers:   workerCount,
-		},
-		{
-			name:         "ants comparison pool test",
-			workerObject: NewTestWorkerObject(antsPoolTest()),
-			numWorkers:   50000,
 		},
 	}
 
@@ -153,13 +142,6 @@ func workBasicPrint() func(w *Worker, in interface{}) error {
 	}
 }
 
-func antsPoolTest() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
-		//time.Sleep(time.Duration(BenchParam) * time.Millisecond)
-		return nil
-	}
-}
-
 func workBasic() func(w *Worker, in interface{}) error {
 	return func(w *Worker, in interface{}) error {
 		i := in.(int)
@@ -204,11 +186,11 @@ func TestWorkers(t *testing.T) {
 				workerOne.Send(i)
 			}
 
-			if err := workerOne.Close(); !assert.Equal(t, tt.errExpected, err != nil) {
+			if err := workerOne.Close(); err != nil && !tt.errExpected {
 				fmt.Println(err)
 				t.Fail()
 			}
-			if err := workerTwo.Close(); !assert.NoError(t, err) {
+			if err := workerTwo.Close(); err != nil && !tt.errExpected {
 				fmt.Println(err)
 				t.Fail()
 			}
@@ -216,28 +198,9 @@ func TestWorkers(t *testing.T) {
 	}
 }
 
-func BenchmarkAntsPool(b *testing.B) {
-	var wg sync.WaitGroup
-	p, _ := ants.NewPool(BenchAntsSize)
-	defer p.Release()
-
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(RunTimes)
-		for j := 0; j < RunTimes; j++ {
-			_ = p.Submit(func() {
-				antsPoolTest()
-				wg.Done()
-			})
-		}
-		wg.Wait()
-	}
-	b.StopTimer()
-}
-
 func BenchmarkGoWorkers(b *testing.B) {
 	ctx := context.Background()
-	worker := NewWorker(ctx, NewTestWorkerObject(antsPoolTest()), BenchAntsSize).Work()
+	worker := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), RunTimes).Work()
 	defer worker.Close()
 
 	b.StartTimer()
