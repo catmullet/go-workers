@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/catmullet/workers"
+	"github.com/catmullet/go-workers"
 	"math/rand"
 )
 

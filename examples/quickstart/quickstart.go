@@ -1,11 +1,11 @@
-// +build ignore
+//// +build ignore
 
 package main
 
 import (
 	"context"
 	"fmt"
-	"github.com/catmullet/workers"
+	"github.com/catmullet/go-workers"
 	"math/rand"
 	"time"
 )
@@ -13,7 +13,7 @@ import (
 func main() {
 	ctx := context.Background()
 	t := time.Now()
-	rnr := workers.NewRunner(ctx, NewWorker(), 1000).Start()
+	rnr := workers.NewRunner(ctx, NewWorker(), 100).Start()
 
 	for i := 0; i < 1000000; i++ {
 		rnr.Send(rand.Intn(100))
