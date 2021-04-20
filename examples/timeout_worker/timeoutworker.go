@@ -5,21 +5,20 @@ package main
 import (
 	"context"
 	"fmt"
-	worker "github.com/catmullet/go-workers"
+	"github.com/catmullet/workers"
 	"time"
 )
 
 func main() {
 	ctx := context.Background()
 
-	timeoutWorker := worker.NewWorker(ctx, NewTimeoutWorker(), 10).Work()
-	timeoutWorker.SetTimeout(100 * time.Millisecond)
+	timeoutWorker := workers.NewRunner(ctx, NewTimeoutWorker(), 10).SetTimeout(100 * time.Millisecond).Start()
 
 	for i := 0; i < 1000000; i++ {
 		timeoutWorker.Send("hello")
 	}
 
-	err := timeoutWorker.Close()
+	err := timeoutWorker.Wait()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -27,11 +26,11 @@ func main() {
 
 type TimeoutWorker struct{}
 
-func NewTimeoutWorker() *TimeoutWorker {
+func NewTimeoutWorker() workers.Worker {
 	return &TimeoutWorker{}
 }
 
-func (tw *TimeoutWorker) Work(w *worker.Worker, in interface{}) error {
+func (tw *TimeoutWorker) Work(in interface{}, out chan<- interface{}) error {
 	fmt.Println(in)
 	time.Sleep(1 * time.Second)
 	return nil
