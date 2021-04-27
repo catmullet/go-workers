@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var defaultWatchSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+var defaultWatchSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL}
 
 type Worker interface {
 	Work(in interface{}, out chan<- interface{}) error
@@ -30,12 +30,13 @@ type Runner interface {
 
 type runner struct {
 	ctx        context.Context
+	stopReqCtx context.Context
 	cancel     context.CancelFunc
+	stopReq     context.CancelFunc
 	inChan     chan interface{}
 	outChan    chan interface{}
 	signalChan chan os.Signal
 	limiter    chan struct{}
-	errChan    chan error
 
 	afterFunc  func(ctx context.Context, err error) error
 	workFunc   func(in interface{}, out chan<- interface{}) error
@@ -56,14 +57,16 @@ type runner struct {
 
 func NewRunner(ctx context.Context, w Worker, numWorkers int64) Runner {
 	var runnerCtx, runnerCancel = context.WithCancel(ctx)
+	stopReqCtx, stopReq := context.WithCancel(ctx)
 	var runner = &runner{
 		ctx:        runnerCtx,
 		cancel:     runnerCancel,
+		stopReqCtx: stopReqCtx,
+		stopReq: stopReq,
 		inChan:     make(chan interface{}, numWorkers),
 		outChan:    nil,
 		signalChan: make(chan os.Signal, 1),
 		limiter:    make(chan struct{}, numWorkers),
-		errChan:    make(chan error, 1),
 		afterFunc:  func(ctx context.Context, err error) error { return err },
 		workFunc:   w.Work,
 		beforeFunc: func(ctx context.Context) error { return nil },
@@ -146,11 +149,26 @@ func (r *runner) SetTimeout(duration time.Duration) Runner {
 
 func (r *runner) Wait() error {
 	var err error
-	r.cancel()
+	r.stopReq()
+
+
 	if err = <-r.errChan; err != nil && err != context.Canceled {
 		return err
 	}
 	return r.afterFunc(r.ctx, err)
+}
+
+func (r *runner) waitImpl() error {
+	r.wg.Wait()
+
+}
+
+func (r *runner) StopRequested() <-chan struct{} {
+	return r.stopReqCtx.Done()
+}
+
+func (r *runner) IsDone() <-chan struct{} {
+	return r.ctx.Done()
 }
 
 // waitForSignal make sure we wait for a term signal and shutdown correctly
@@ -175,9 +193,14 @@ func (r *runner) startWork() {
 
 	go func() {
 		var wg = new(sync.WaitGroup)
-	workLoop:
 		for {
 			select {
+			case <-r.StopRequested():
+				wg.Wait()
+				if len(r.inChan) > 0 {
+					continue
+				}
+				r.cancel()
 			case in := <-r.inChan:
 				r.limiter <- struct{}{}
 				wg.Add(1)
@@ -193,17 +216,13 @@ func (r *runner) startWork() {
 						})
 					}
 				}()
-			case <-r.ctx.Done():
-				if len(r.inChan) > 0 {
-					continue
+			case <-r.IsDone():
+				if r.err == nil {
+					r.err = context.Canceled
 				}
-				break workLoop
-			default:
-				continue
+				return
 			}
 		}
-		wg.Wait()
-		r.errChan <- r.err
 	}()
 	return
 }
