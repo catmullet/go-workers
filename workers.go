@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"sync"
@@ -29,14 +30,14 @@ type Runner interface {
 }
 
 type runner struct {
-	ctx        context.Context
-	stopReqCtx context.Context
-	cancel     context.CancelFunc
-	stopReq     context.CancelFunc
-	inChan     chan interface{}
-	outChan    chan interface{}
-	signalChan chan os.Signal
-	limiter    chan struct{}
+	ctx         context.Context
+	reqStopCtx  context.Context
+	cancel      context.CancelFunc
+	requestStop context.CancelFunc
+	inChan      chan interface{}
+	outChan     chan interface{}
+	signalChan  chan os.Signal
+	limiter     chan struct{}
 
 	afterFunc  func(ctx context.Context, err error) error
 	workFunc   func(in interface{}, out chan<- interface{}) error
@@ -57,26 +58,26 @@ type runner struct {
 
 func NewRunner(ctx context.Context, w Worker, numWorkers int64) Runner {
 	var runnerCtx, runnerCancel = context.WithCancel(ctx)
-	stopReqCtx, stopReq := context.WithCancel(ctx)
+	reqStopCtx, requestStop := context.WithCancel(ctx)
 	var runner = &runner{
-		ctx:        runnerCtx,
-		cancel:     runnerCancel,
-		stopReqCtx: stopReqCtx,
-		stopReq: stopReq,
-		inChan:     make(chan interface{}, numWorkers),
-		outChan:    nil,
-		signalChan: make(chan os.Signal, 1),
-		limiter:    make(chan struct{}, numWorkers),
-		afterFunc:  func(ctx context.Context, err error) error { return err },
-		workFunc:   w.Work,
-		beforeFunc: func(ctx context.Context) error { return nil },
-		leader:     true,
-		err:        nil,
-		numWorkers: numWorkers,
-		lock:       new(sync.RWMutex),
-		wg:         new(sync.WaitGroup),
-		once:       new(sync.Once),
-		firstCall:  new(sync.Once),
+		ctx:         runnerCtx,
+		cancel:      runnerCancel,
+		reqStopCtx:  reqStopCtx,
+		requestStop: requestStop,
+		inChan:      make(chan interface{}, numWorkers),
+		outChan:     nil,
+		signalChan:  make(chan os.Signal, 1),
+		limiter:     make(chan struct{}, numWorkers),
+		afterFunc:   func(ctx context.Context, err error) error { return err },
+		workFunc:    w.Work,
+		beforeFunc:  func(ctx context.Context) error { return nil },
+		leader:      true,
+		err:         nil,
+		numWorkers:  numWorkers,
+		lock:        new(sync.RWMutex),
+		wg:          new(sync.WaitGroup),
+		once:        new(sync.Once),
+		firstCall:   new(sync.Once),
 	}
 	runner.waitForSignal(defaultWatchSignals...)
 	return runner
@@ -148,23 +149,16 @@ func (r *runner) SetTimeout(duration time.Duration) Runner {
 }
 
 func (r *runner) Wait() error {
-	var err error
-	r.stopReq()
-
-
-	if err = <-r.errChan; err != nil && err != context.Canceled {
-		return err
-	}
-	return r.afterFunc(r.ctx, err)
-}
-
-func (r *runner) waitImpl() error {
+	r.requestStop()
 	r.wg.Wait()
-
+	if r.err != nil && !errors.Is(r.err, context.Canceled) {
+		return r.err
+	}
+	return nil
 }
 
 func (r *runner) StopRequested() <-chan struct{} {
-	return r.stopReqCtx.Done()
+	return r.reqStopCtx.Done()
 }
 
 func (r *runner) IsDone() <-chan struct{} {
@@ -184,7 +178,6 @@ func (r *runner) waitForSignal(signals ...os.Signal) {
 
 func (r *runner) startWork() {
 	if r.err = r.beforeFunc(r.ctx); r.err != nil {
-		r.errChan <- r.err
 		return
 	}
 	if r.timeout > 0 {
