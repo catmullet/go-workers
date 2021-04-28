@@ -183,16 +183,17 @@ func (r *runner) startWork() {
 	if r.timeout > 0 {
 		r.ctx, r.cancel = context.WithTimeout(r.ctx, r.timeout)
 	}
-
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		var wg = new(sync.WaitGroup)
 		for {
 			select {
 			case <-r.StopRequested():
-				wg.Wait()
 				if len(r.inChan) > 0 {
 					continue
 				}
+				wg.Wait()
 				r.cancel()
 			case in := <-r.inChan:
 				r.limiter <- struct{}{}

@@ -20,48 +20,55 @@ const (
 )
 
 type WorkerOne struct {
+	count int
+	mu    *sync.RWMutex
 }
 type WorkerTwo struct {
+	count int
+	mu    *sync.RWMutex
 }
 
-func NewWorkerOne() Worker {
-	return &WorkerOne{}
+func (w *WorkerOne) Add() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.count++
 }
 
-func NewWorkerTwo() Worker {
-	return &WorkerTwo{}
+func (w *WorkerOne) GetCount() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.count
+}
+
+func (w *WorkerTwo) Add() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.count++
+}
+
+func (w *WorkerTwo) GetCount() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.count
 }
 
 func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
-	var workerOne = "worker_one"
-	mut.Lock()
-	defer mut.Unlock()
-	if val, ok := count[workerOne]; ok {
-		count[workerOne] = val + 1
-	} else {
-		count[workerOne] = 1
-	}
-
+	wo.mu.Lock()
+	wo.count++
+	wo.mu.Unlock()
 	total := in.(int) * 2
 	out <- total
 	return nil
 }
 
 func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
-	var workerTwo = "worker_two"
-	mut.Lock()
-	defer mut.Unlock()
-	if val, ok := count[workerTwo]; ok {
-		count[workerTwo] = val + 1
-	} else {
-		count[workerTwo] = 1
-	}
+	wt.mu.Lock()
+	wt.count++
+	wt.mu.Unlock()
 	return nil
 }
 
 var (
-	count               = make(map[string]int)
-	mut                 = sync.RWMutex{}
 	err                 = errors.New("test error")
 	deadline            = func() time.Time { return time.Now().Add(workerTimeout) }
 	workerTestScenarios = []workerTest{
@@ -201,8 +208,10 @@ func TestWorkersFinish(t *testing.T) {
 	ctx := context.Background()
 
 	var wg = new(sync.WaitGroup)
-	workerOne := NewRunner(ctx, NewWorkerOne(), 1000).Start()
-	workerTwo := NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
+	taskOne := &WorkerOne{mu: new(sync.RWMutex)}
+	taskTwo := &WorkerTwo{mu: new(sync.RWMutex)}
+	workerOne := NewRunner(ctx, taskOne, 1000).Start()
+	workerTwo := NewRunner(ctx, taskTwo, 1000).InFrom(workerOne).Start()
 
 	wg.Add(1)
 	go func() {
@@ -211,7 +220,7 @@ func TestWorkersFinish(t *testing.T) {
 			workerOne.Send(rand.Intn(100))
 		}
 	}()
-
+	wg.Wait()
 	if err := workerOne.Wait(); err != nil {
 		fmt.Println(err)
 	}
@@ -220,14 +229,12 @@ func TestWorkersFinish(t *testing.T) {
 		fmt.Println(err)
 	}
 
-	wg.Wait()
-
-	if count["worker_one"] != 100000 {
-		fmt.Println("worker one failed to finish,", "worker_one count", count["worker_one"], "/ 100000")
+	if taskOne.GetCount() != 100000 {
+		fmt.Println("worker one failed to finish,", "worker_one count", taskOne.GetCount(), "/ 100000")
 		t.Fail()
 	}
-	if count["worker_two"] != 100000 {
-		fmt.Println("worker two failed to finish,", "worker_two count", count["worker_two"], "/ 100000")
+	if taskTwo.GetCount() != 100000 {
+		fmt.Println("worker two failed to finish,", "worker_two count", taskTwo.GetCount(), "/ 100000")
 		t.Fail()
 	}
 }
