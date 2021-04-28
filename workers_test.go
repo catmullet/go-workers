@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 )
@@ -18,7 +19,49 @@ const (
 	runTimes      = 10000
 )
 
+type WorkerOne struct {
+}
+type WorkerTwo struct {
+}
+
+func NewWorkerOne() Worker {
+	return &WorkerOne{}
+}
+
+func NewWorkerTwo() Worker {
+	return &WorkerTwo{}
+}
+
+func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
+	var workerOne = "worker_one"
+	mut.Lock()
+	defer mut.Unlock()
+	if val, ok := count[workerOne]; ok {
+		count[workerOne] = val + 1
+	} else {
+		count[workerOne] = 1
+	}
+
+	total := in.(int) * 2
+	out <- total
+	return nil
+}
+
+func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
+	var workerTwo = "worker_two"
+	mut.Lock()
+	defer mut.Unlock()
+	if val, ok := count[workerTwo]; ok {
+		count[workerTwo] = val + 1
+	} else {
+		count[workerTwo] = 1
+	}
+	return nil
+}
+
 var (
+	count               = make(map[string]int)
+	mut                 = sync.RWMutex{}
 	err                 = errors.New("test error")
 	deadline            = func() time.Time { return time.Now().Add(workerTimeout) }
 	workerTestScenarios = []workerTest{
@@ -151,6 +194,41 @@ func TestWorkers(t *testing.T) {
 				t.Fail()
 			}
 		})
+	}
+}
+
+func TestWorkersFinish(t *testing.T) {
+	ctx := context.Background()
+
+	var wg = new(sync.WaitGroup)
+	workerOne := NewRunner(ctx, NewWorkerOne(), 1000).Start()
+	workerTwo := NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100000; i++ {
+			workerOne.Send(rand.Intn(100))
+		}
+	}()
+
+	if err := workerOne.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if err := workerTwo.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	wg.Wait()
+
+	if count["worker_one"] != 100000 {
+		fmt.Println("worker one failed to finish,", "worker_one count", count["worker_one"], "/ 100000")
+		t.Fail()
+	}
+	if count["worker_two"] != 100000 {
+		fmt.Println("worker two failed to finish,", "worker_two count", count["worker_two"], "/ 100000")
+		t.Fail()
 	}
 }
 
