@@ -16,59 +16,52 @@ import (
 const (
 	workerCount   = 1000
 	workerTimeout = time.Millisecond * 300
-	runTimes      = 10000
+	runTimes      = 100000
 )
 
 type WorkerOne struct {
-	count int
-	mu    *sync.RWMutex
 }
 type WorkerTwo struct {
-	count int
-	mu    *sync.RWMutex
 }
 
-func (w *WorkerOne) Add() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.count++
+func NewWorkerOne() Worker {
+	return &WorkerOne{}
 }
 
-func (w *WorkerOne) GetCount() int {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.count
-}
-
-func (w *WorkerTwo) Add() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.count++
-}
-
-func (w *WorkerTwo) GetCount() int {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.count
+func NewWorkerTwo() Worker {
+	return &WorkerTwo{}
 }
 
 func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
-	wo.mu.Lock()
-	wo.count++
-	wo.mu.Unlock()
+	var workerOne = "worker_one"
+	mut.Lock()
+	if val, ok := count[workerOne]; ok {
+		count[workerOne] = val + 1
+	} else {
+		count[workerOne] = 1
+	}
+	mut.Unlock()
+
 	total := in.(int) * 2
 	out <- total
 	return nil
 }
 
 func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
-	wt.mu.Lock()
-	wt.count++
-	wt.mu.Unlock()
+	var workerTwo = "worker_two"
+	mut.Lock()
+	if val, ok := count[workerTwo]; ok {
+		count[workerTwo] = val + 1
+	} else {
+		count[workerTwo] = 1
+	}
+	mut.Unlock()
 	return nil
 }
 
 var (
+	count               = make(map[string]int)
+	mut                 = sync.RWMutex{}
 	err                 = errors.New("test error")
 	deadline            = func() time.Time { return time.Now().Add(workerTimeout) }
 	workerTestScenarios = []workerTest{
@@ -185,8 +178,7 @@ func TestWorkers(t *testing.T) {
 			ctx := context.Background()
 			workerOne := getWorker(ctx, tt).Start()
 			// always need a consumer for the out tests so using basic here.
-			workerTwo := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount)
-			workerTwo.InFrom(workerOne).Start()
+			workerTwo := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount).InFrom(workerOne).Start()
 
 			for i := 0; i < runTimes; i++ {
 				workerOne.Send(i)
@@ -206,21 +198,13 @@ func TestWorkers(t *testing.T) {
 
 func TestWorkersFinish(t *testing.T) {
 	ctx := context.Background()
+	workerOne := NewRunner(ctx, NewWorkerOne(), 1000).Start()
+	workerTwo := NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
 
-	var wg = new(sync.WaitGroup)
-	taskOne := &WorkerOne{mu: new(sync.RWMutex)}
-	taskTwo := &WorkerTwo{mu: new(sync.RWMutex)}
-	workerOne := NewRunner(ctx, taskOne, 1000).Start()
-	workerTwo := NewRunner(ctx, taskTwo, 1000).InFrom(workerOne).Start()
+	for i := 0; i < 100000; i++ {
+		workerOne.Send(rand.Intn(100))
+	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100000; i++ {
-			workerOne.Send(rand.Intn(100))
-		}
-	}()
-	wg.Wait()
 	if err := workerOne.Wait(); err != nil {
 		fmt.Println(err)
 	}
@@ -229,12 +213,12 @@ func TestWorkersFinish(t *testing.T) {
 		fmt.Println(err)
 	}
 
-	if taskOne.GetCount() != 100000 {
-		fmt.Println("worker one failed to finish,", "worker_one count", taskOne.GetCount(), "/ 100000")
+	if count["worker_one"] != 100000 {
+		fmt.Println("worker one failed to finish,", "worker_one count", count["worker_one"], "/ 100000")
 		t.Fail()
 	}
-	if taskTwo.GetCount() != 100000 {
-		fmt.Println("worker two failed to finish,", "worker_two count", taskTwo.GetCount(), "/ 100000")
+	if count["worker_two"] != 100000 {
+		fmt.Println("worker two failed to finish,", "worker_two count", count["worker_two"], "/ 100000")
 		t.Fail()
 	}
 }
