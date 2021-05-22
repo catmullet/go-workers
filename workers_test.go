@@ -6,79 +6,106 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 )
 
 const (
-	workerCount   = 10000
+	workerCount   = 1000
 	workerTimeout = time.Millisecond * 300
-	RunTimes      = 1000000
+	runTimes      = 100000
 )
 
+type WorkerOne struct {
+}
+type WorkerTwo struct {
+}
+
+func NewWorkerOne() Worker {
+	return &WorkerOne{}
+}
+
+func NewWorkerTwo() Worker {
+	return &WorkerTwo{}
+}
+
+func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
+	var workerOne = "worker_one"
+	mut.Lock()
+	if val, ok := count[workerOne]; ok {
+		count[workerOne] = val + 1
+	} else {
+		count[workerOne] = 1
+	}
+	mut.Unlock()
+
+	total := in.(int) * 2
+	out <- total
+	return nil
+}
+
+func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
+	var workerTwo = "worker_two"
+	mut.Lock()
+	if val, ok := count[workerTwo]; ok {
+		count[workerTwo] = val + 1
+	} else {
+		count[workerTwo] = 1
+	}
+	mut.Unlock()
+	return nil
+}
+
 var (
+	count               = make(map[string]int)
+	mut                 = sync.RWMutex{}
 	err                 = errors.New("test error")
 	deadline            = func() time.Time { return time.Now().Add(workerTimeout) }
 	workerTestScenarios = []workerTest{
 		{
-			name:         "work basic",
-			workerObject: NewTestWorkerObject(workBasic()),
-			numWorkers:   workerCount,
+			name:       "work basic",
+			worker:     NewTestWorkerObject(workBasic()),
+			numWorkers: workerCount,
 		},
 		{
-			name:         "work basic with Println",
-			workerObject: NewTestWorkerObject(workBasicPrintln()),
-			numWorkers:   workerCount,
+			name:       "work basic with timeout",
+			timeout:    workerTimeout,
+			worker:     NewTestWorkerObject(workBasic()),
+			numWorkers: workerCount,
 		},
 		{
-			name:         "work basic with Printf",
-			workerObject: NewTestWorkerObject(workBasicPrintf()),
-			numWorkers:   workerCount,
+			name:       "work basic with deadline",
+			deadline:   deadline,
+			worker:     NewTestWorkerObject(workBasic()),
+			numWorkers: workerCount,
 		},
 		{
-			name:         "work basic with Print",
-			workerObject: NewTestWorkerObject(workBasicPrint()),
-			numWorkers:   workerCount,
+			name:        "work with return of error",
+			worker:      NewTestWorkerObject(workWithError(err)),
+			errExpected: true,
+			numWorkers:  workerCount,
 		},
 		{
-			name:         "work basic with timeout",
-			timeout:      workerTimeout,
-			workerObject: NewTestWorkerObject(workBasic()),
-			numWorkers:   workerCount,
+			name:        "work with return of error with timeout",
+			timeout:     workerTimeout,
+			worker:      NewTestWorkerObject(workWithError(err)),
+			errExpected: true,
+			numWorkers:  workerCount,
 		},
 		{
-			name:         "work basic with deadline",
-			deadline:     deadline,
-			workerObject: NewTestWorkerObject(workBasic()),
-			numWorkers:   workerCount,
-		},
-		{
-			name:         "work with return of error",
-			workerObject: NewTestWorkerObject(workWithError(err)),
-			errExpected:  true,
-			numWorkers:   workerCount,
-		},
-		{
-			name:         "work with return of error with timeout",
-			timeout:      workerTimeout,
-			workerObject: NewTestWorkerObject(workWithError(err)),
-			errExpected:  true,
-			numWorkers:   workerCount,
-		},
-		{
-			name:         "work with return of error with deadline",
-			deadline:     deadline,
-			workerObject: NewTestWorkerObject(workWithError(err)),
-			errExpected:  true,
-			numWorkers:   workerCount,
+			name:        "work with return of error with deadline",
+			deadline:    deadline,
+			worker:      NewTestWorkerObject(workWithError(err)),
+			errExpected: true,
+			numWorkers:  workerCount,
 		},
 	}
 
-	getWorker = func(ctx context.Context, wt workerTest) *Worker {
-		worker := NewWorker(ctx, wt.workerObject, wt.numWorkers)
+	getWorker = func(ctx context.Context, wt workerTest) Runner {
+		worker := NewRunner(ctx, wt.worker, wt.numWorkers)
 		if wt.timeout > 0 {
 			worker.SetTimeout(wt.timeout)
 		}
@@ -90,74 +117,50 @@ var (
 )
 
 type workerTest struct {
-	name         string
-	timeout      time.Duration
-	deadline     func() time.Time
-	workerObject WorkerObject
-	numWorkers   int64
-	testSignal   bool
-	errExpected  bool
+	name        string
+	timeout     time.Duration
+	deadline    func() time.Time
+	worker      Worker
+	numWorkers  int64
+	testSignal  bool
+	errExpected bool
 }
 
 type TestWorkerObject struct {
-	workFunc func(w *Worker, in interface{}) error
+	workFunc func(in interface{}, out chan<- interface{}) error
 }
 
-func NewTestWorkerObject(wf func(w *Worker, in interface{}) error) *TestWorkerObject {
+func NewTestWorkerObject(wf func(in interface{}, out chan<- interface{}) error) Worker {
 	return &TestWorkerObject{wf}
 }
 
-func (tw *TestWorkerObject) Work(w *Worker, in interface{}) error {
-	return tw.workFunc(w, in)
+func (tw *TestWorkerObject) Work(in interface{}, out chan<- interface{}) error {
+	return tw.workFunc(in, out)
 }
 
-func workBasicNoOut() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
+func workBasicNoOut() func(in interface{}, out chan<- interface{}) error {
+	return func(in interface{}, out chan<- interface{}) error {
 		_ = in.(int)
 		return nil
 	}
 }
 
-func workBasicPrintln() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
+func workBasic() func(in interface{}, out chan<- interface{}) error {
+	return func(in interface{}, out chan<- interface{}) error {
 		i := in.(int)
-		w.Println(i)
+		out <- i
 		return nil
 	}
 }
 
-func workBasicPrintf() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
-		i := in.(int)
-		w.Printf("test_number:%d", i)
-		return nil
-	}
-}
-
-func workBasicPrint() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
-		i := in.(int)
-		w.Print(i)
-		return nil
-	}
-}
-
-func workBasic() func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
-		i := in.(int)
-		w.Out(i)
-		return nil
-	}
-}
-
-func workWithError(err error) func(w *Worker, in interface{}) error {
-	return func(w *Worker, in interface{}) error {
+func workWithError(err error) func(in interface{}, out chan<- interface{}) error {
+	return func(in interface{}, out chan<- interface{}) error {
 		i := in.(int)
 		total := i * rand.Intn(1000)
 		if i == 100 {
 			return err
 		}
-		w.Out(total)
+		out <- total
 		return nil
 	}
 }
@@ -170,27 +173,22 @@ func TestMain(m *testing.M) {
 }
 
 func TestWorkers(t *testing.T) {
-	f, err := os.Create(filepath.Join(os.TempDir(), "testfile.txt"))
-	if err != nil {
-		t.Fail()
-	}
 	for _, tt := range workerTestScenarios {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			workerOne := getWorker(ctx, tt).SetWriterOut(f).Work()
+			workerOne := getWorker(ctx, tt).Start()
 			// always need a consumer for the out tests so using basic here.
-			workerTwo := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount)
-			workerTwo.InFrom(workerOne).Work()
+			workerTwo := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount).InFrom(workerOne).Start()
 
-			for i := 0; i < RunTimes; i++ {
+			for i := 0; i < runTimes; i++ {
 				workerOne.Send(i)
 			}
 
-			if err := workerOne.Close(); err != nil && !tt.errExpected {
+			if err := workerOne.Wait(); err != nil && !tt.errExpected {
 				fmt.Println(err)
 				t.Fail()
 			}
-			if err := workerTwo.Close(); err != nil && !tt.errExpected {
+			if err := workerTwo.Wait(); err != nil && !tt.errExpected {
 				fmt.Println(err)
 				t.Fail()
 			}
@@ -198,16 +196,46 @@ func TestWorkers(t *testing.T) {
 	}
 }
 
+func TestWorkersFinish(t *testing.T) {
+	ctx := context.Background()
+	workerOne := NewRunner(ctx, NewWorkerOne(), 1000).Start()
+	workerTwo := NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
+
+	for i := 0; i < 100000; i++ {
+		workerOne.Send(rand.Intn(100))
+	}
+
+	if err := workerOne.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if err := workerTwo.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if count["worker_one"] != 100000 {
+		fmt.Println("worker one failed to finish,", "worker_one count", count["worker_one"], "/ 100000")
+		t.Fail()
+	}
+	if count["worker_two"] != 100000 {
+		fmt.Println("worker two failed to finish,", "worker_two count", count["worker_two"], "/ 100000")
+		t.Fail()
+	}
+}
+
 func BenchmarkGoWorkers(b *testing.B) {
 	ctx := context.Background()
-	worker := NewWorker(ctx, NewTestWorkerObject(workBasicNoOut()), RunTimes).Work()
-	defer worker.Close()
+	worker := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount).Start()
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < RunTimes; j++ {
+		for j := 0; j < runTimes; j++ {
 			worker.Send(j)
 		}
 	}
+
 	b.StopTimer()
+	if err := worker.Wait(); err != nil {
+		b.Error(err)
+	}
 }

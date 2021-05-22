@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
-	worker "github.com/catmullet/go-workers"
+	"github.com/catmullet/go-workers"
 	"math/rand"
 	"time"
 )
@@ -13,13 +13,13 @@ import (
 func main() {
 	ctx := context.Background()
 	t := time.Now()
-	w := worker.NewWorker(ctx, NewWorker(), 1000).Work()
+	rnr := workers.NewRunner(ctx, NewWorker(), 100).Start()
 
 	for i := 0; i < 1000000; i++ {
-		w.Send(rand.Intn(100))
+		rnr.Send(rand.Intn(100))
 	}
 
-	if err := w.Close(); err != nil {
+	if err := rnr.Wait(); err != nil {
 		fmt.Println(err)
 	}
 
@@ -27,15 +27,15 @@ func main() {
 	fmt.Printf("total time %dms\n", totalTime)
 }
 
-type Worker struct {
+type WorkerOne struct {
 }
 
-func NewWorker() *Worker {
-	return &Worker{}
+func NewWorker() workers.Worker {
+	return &WorkerOne{}
 }
 
-func (wo *Worker) Work(w *worker.Worker, in interface{}) error {
+func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
 	total := in.(int) * 2
-	defer w.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
+	fmt.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
 	return nil
 }

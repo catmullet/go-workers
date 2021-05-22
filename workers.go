@@ -1,266 +1,253 @@
 package workers
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"fmt"
-	"golang.org/x/sync/semaphore"
-	"io"
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
-const (
-	internalBufferFlushLimit = 512
-	signalChannelBufferSize  = 1
-)
+var defaultWatchSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL}
 
-var (
-	// Exported variables
-	// ErrOutChannelUpdate When the output channel is not able to be updated.
-	ErrOutChannelUpdate = errors.New("out channel already set")
-)
-
-// WorkerObject interface to be implemented
-type WorkerObject interface {
-	Work(w *Worker, in interface{}) error
+// Worker Contains the work function. Allows an input and output to a channel or another worker for pipeline work.
+// Return nil if you want the Runner to continue otherwise any error will cause the Runner to shutdown and return the
+// error.
+type Worker interface {
+	Work(in interface{}, out chan<- interface{}) error
 }
 
-// Worker The object to hold all necessary configuration and channels for the worker
-// only accessible by it's methods.
-type Worker struct {
-	Ctx             context.Context
-	workerFunction  WorkerObject
-	err             error
-	numberOfWorkers int64
-	inChan          chan interface{}
-	outChan         chan interface{}
-	sema            *semaphore.Weighted
-	sigChan         chan os.Signal
-	timeout         time.Duration
-	cancel          context.CancelFunc
-	writer          *bufio.Writer
-	mu              *sync.RWMutex
-	wg              *sync.WaitGroup
-	once            *sync.Once
+// Runner Handles the running the Worker logic.
+type Runner interface {
+	BeforeFunc(func(ctx context.Context) error) Runner
+	AfterFunc(func(ctx context.Context, err error) error) Runner
+	SetDeadline(t time.Time) Runner
+	SetTimeout(duration time.Duration) Runner
+	SetFollower()
+	Send(in interface{})
+	InFrom(w ...Runner) Runner
+	SetOut(chan interface{})
+	Start() Runner
+	Stop() chan error
+	Wait() error
 }
 
-// NewWorker factory method to return new Worker
-func NewWorker(ctx context.Context, workerFunction WorkerObject, numberOfWorkers int64) (worker *Worker) {
-	c, cancel := context.WithCancel(ctx)
-	return &Worker{
-		numberOfWorkers: numberOfWorkers,
-		Ctx:             c,
-		workerFunction:  workerFunction,
-		inChan:          make(chan interface{}, numberOfWorkers),
-		sema:            semaphore.NewWeighted(numberOfWorkers),
-		sigChan:         make(chan os.Signal, signalChannelBufferSize),
-		timeout:         time.Duration(0),
-		cancel:          cancel,
-		writer:          bufio.NewWriter(os.Stdout),
-		wg:              new(sync.WaitGroup),
-		mu:              new(sync.RWMutex),
-		once:            new(sync.Once),
+type runner struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	inChan     chan interface{}
+	outChan    chan interface{}
+	errChan    chan error
+	signalChan chan os.Signal
+	limiter    chan struct{}
+
+	afterFunc  func(ctx context.Context, err error) error
+	workFunc   func(in interface{}, out chan<- interface{}) error
+	beforeFunc func(ctx context.Context) error
+
+	timeout  time.Duration
+	deadline time.Duration
+
+	isLeader   bool
+	stopCalled bool
+
+	numWorkers int64
+	lock       *sync.RWMutex
+	wg         *sync.WaitGroup
+	done       *sync.Once
+	once       *sync.Once
+}
+
+// NewRunner Factory function for a new Runner.  The Runner will handle running the workers logic.
+func NewRunner(ctx context.Context, w Worker, numWorkers int64) Runner {
+	var runnerCtx, runnerCancel = context.WithCancel(ctx)
+	var runner = &runner{
+		ctx:        runnerCtx,
+		cancel:     runnerCancel,
+		inChan:     make(chan interface{}, numWorkers),
+		outChan:    nil,
+		errChan:    make(chan error, 1),
+		signalChan: make(chan os.Signal, 1),
+		limiter:    make(chan struct{}, numWorkers),
+		afterFunc:  func(ctx context.Context, err error) error { return err },
+		workFunc:   w.Work,
+		beforeFunc: func(ctx context.Context) error { return nil },
+		numWorkers: numWorkers,
+		isLeader:   true,
+		lock:       new(sync.RWMutex),
+		wg:         new(sync.WaitGroup),
+		once:       new(sync.Once),
+		done:       new(sync.Once),
 	}
+	runner.waitForSignal(defaultWatchSignals...)
+	return runner
 }
 
-// Send wrapper to send interface through workers "in" channel
-func (iw *Worker) Send(in interface{}) {
+// Send Send an object to the worker for processing.
+func (r *runner) Send(in interface{}) {
 	select {
-	case <-iw.IsDone():
+	case <-r.ctx.Done():
 		return
-	case iw.inChan <- in:
-		return
+	case r.inChan <- in:
 	}
 }
 
-// InFrom assigns workers out channel to this workers in channel
-func (iw *Worker) InFrom(inWorker ...*Worker) *Worker {
-	for _, worker := range inWorker {
-		worker.outChan = iw.inChan
+// InFrom Set a worker to accept output from another worker(s).
+func (r *runner) InFrom(w ...Runner) Runner {
+	r.SetFollower()
+	for _, wr := range w {
+		wr.SetOut(r.inChan)
 	}
-	return iw
+	return r
 }
 
-// Work start up the number of workers specified by the numberOfWorkers variable
-func (iw *Worker) Work() *Worker {
-	if iw.timeout > 0 {
-		iw.Ctx, iw.cancel = context.WithTimeout(iw.Ctx, iw.timeout)
-	}
-	iw.wg.Add(1)
-	go func() {
-		defer iw.wg.Done()
-		var wg = new(sync.WaitGroup)
-		for {
-			select {
-			case <-iw.IsDone():
-				wg.Wait()
-				if len(iw.inChan) > 0 {
-					continue
-				}
-				if iw.err == nil {
-					iw.err = context.Canceled
-				}
-				return
-			case in := <-iw.inChan:
-				err := iw.sema.Acquire(iw.Ctx, 1)
-				if err != nil {
-					return
-				}
-				wg.Add(1)
-				go func(in interface{}) {
-					defer wg.Done()
-					defer iw.sema.Release(1)
-					if err := iw.workerFunction.Work(iw, in); err != nil {
-						iw.once.Do(func() {
-							iw.err = err
-							if iw.cancel != nil {
-								iw.cancel()
-							}
-						})
-						return
-					}
-				}(in)
-			}
-		}
-	}()
-	return iw
+// SetFollower Sets the worker as a follower and does not need to close it's in channel.
+func (r *runner) SetFollower() {
+	r.lock.Lock()
+	r.isLeader = false
+	r.lock.Unlock()
 }
 
-// OutChannel Sets the workers output channel to one provided.
-// If the worker already has a child worker attached this function will return an error (workers.ErrOutChannelUpdate).
-func (iw *Worker) OutChannel(out chan interface{}) error {
-	if iw.outChan != nil {
-		return ErrOutChannelUpdate
-	}
-	iw.outChan = out
-	return nil
+// Start Starts the worker on processing.
+func (r *runner) Start() Runner {
+	r.startWork()
+	return r
 }
 
-// InChannel Returns the workers intake channel for use with legacy systems, otherwise use workers Send() method.
-func (iw *Worker) InChannel() chan interface{} {
-	return iw.inChan
+// BeforeFunc Function to be run before worker starts processing.
+func (r *runner) BeforeFunc(f func(ctx context.Context) error) Runner {
+	r.beforeFunc = f
+	return r
 }
 
-// Out pushes value to workers out channel
-func (iw *Worker) Out(out interface{}) {
-	select {
-	case <-iw.Ctx.Done():
-		return
-	case iw.outChan <- out:
+// AfterFunc Function to be run after worker has stopped.
+func (r *runner) AfterFunc(f func(ctx context.Context, err error) error) Runner {
+	r.afterFunc = f
+	return r
+}
+
+// SetOut Allows the setting of a workers out channel, if not already set.
+func (r *runner) SetOut(c chan interface{}) {
+	if r.outChan != nil {
 		return
 	}
-}
-
-// CancelOnSignal will send cancel to workers when signals specified are received
-func (iw *Worker) CancelOnSignal(signals ...os.Signal) *Worker {
-	if len(signals) > 0 {
-		iw.waitForSignal(signals...)
-	}
-	return iw
-}
-
-// waitForSignal make sure we wait for a term signal and shutdown correctly
-func (iw *Worker) waitForSignal(signals ...os.Signal) {
-	go func() {
-		signal.Notify(iw.sigChan, signals...)
-		<-iw.sigChan
-		if iw.cancel != nil {
-			iw.cancel()
-		}
-	}()
-}
-
-// Wait waits for all the workers to finish up
-func (iw *Worker) Wait() (err error) {
-	iw.wg.Wait()
-	if iw.cancel != nil {
-		iw.cancel()
-	}
-	return iw.err
+	r.outChan = c
 }
 
 // SetDeadline allows a time to be set when the workers should stop.
 // Deadline needs to be handled by the IsDone method.
-func (iw *Worker) SetDeadline(t time.Time) *Worker {
-	iw.mu.Lock()
-	defer iw.mu.Unlock()
-	iw.Ctx, iw.cancel = context.WithDeadline(iw.Ctx, t)
-	return iw
+func (r *runner) SetDeadline(t time.Time) Runner {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.ctx, r.cancel = context.WithDeadline(r.ctx, t)
+	return r
 }
 
 // SetTimeout allows a time duration to be set when the workers should stop.
 // Timeout needs to be handled by the IsDone method.
-func (iw *Worker) SetTimeout(duration time.Duration) *Worker {
-	iw.mu.Lock()
-	defer iw.mu.Unlock()
-	iw.timeout = duration
-	return iw
+func (r *runner) SetTimeout(duration time.Duration) Runner {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.timeout = duration
+	return r
 }
 
-// IsDone returns a context's cancellation or error
-func (iw *Worker) IsDone() <-chan struct{} {
-	return iw.Ctx.Done()
-}
-
-// SetWriterOut sets the writer for the Print* functions
-// (ex.
-// 		f, err := os.Create("output.txt"))
-//		defer f.Close()
-// 		worker.SetWriteOut(f)
-// )
-// If you have to print anything to stdout using the provided
-// Print functions can significantly improve performance by using
-// buffered output.
-func (iw *Worker) SetWriterOut(writer io.Writer) *Worker {
-	iw.writer.Reset(writer)
-	return iw
-}
-
-// Println prints line output of a
-func (iw *Worker) Println(a ...interface{}) {
-	iw.mu.Lock()
-	defer iw.mu.Unlock()
-	iw.internalBufferFlush()
-	_, _ = iw.writer.WriteString(fmt.Sprintln(a...))
-}
-
-// Printf prints based on format provided and a
-func (iw *Worker) Printf(format string, a ...interface{}) {
-	iw.mu.Lock()
-	defer iw.mu.Unlock()
-	iw.internalBufferFlush()
-	_, _ = iw.writer.WriteString(fmt.Sprintf(format, a...))
-}
-
-// Print prints output of a
-func (iw *Worker) Print(a ...interface{}) {
-	iw.mu.Lock()
-	defer iw.mu.Unlock()
-	iw.internalBufferFlush()
-	_, _ = iw.writer.WriteString(fmt.Sprint(a...))
-}
-
-// internalBufferFlush makes sure we haven't used up the available buffer
-// by flushing the buffer when we get below the danger zone.
-func (iw *Worker) internalBufferFlush() {
-	if iw.writer.Available() < internalBufferFlushLimit {
-		_ = iw.writer.Flush()
-	}
-}
-
-// Close Note that it is only necessary to close a channel if the receiver is
-// looking for a close. Closing the channel is a control signal on the
-// channel indicating that no more data follows. Thus it makes sense to only close the
-// in channel on the worker. For now we will just send the cancel signal
-func (iw *Worker) Close() error {
-	iw.cancel()
-	defer func() { _ = iw.writer.Flush() }()
-	if err := iw.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		return err
+// Wait calls stop on workers and waits for the channel to drain.
+// !!Should only be called when certain nothing will send to worker.
+func (r *runner) Wait() (err error) {
+	r.waitForDrain()
+	if err = <-r.Stop(); err != nil || !errors.Is(err, context.Canceled) {
+		return
 	}
 	return nil
+}
+
+// Stop Stops the processing of a worker and closes it's channel in.
+// Returns a blocking channel with type error.
+// !!Should only be called when certain nothing will send to worker.
+func (r *runner) Stop() chan error {
+	r.done.Do(func() {
+		if r.inChan != nil && r.isLeader {
+			close(r.inChan)
+		}
+	})
+	return r.errChan
+}
+
+// IsDone returns a channel signaling the workers context has been canceled.
+func (r *runner) IsDone() <-chan struct{} {
+	return r.ctx.Done()
+}
+
+// waitForSignal make sure we wait for a term signal and shutdown correctly
+func (r *runner) waitForSignal(signals ...os.Signal) {
+	go func() {
+		signal.Notify(r.signalChan, signals...)
+		<-r.signalChan
+		if r.cancel != nil {
+			r.cancel()
+		}
+	}()
+}
+
+// waitForDrain Waits for the limiter to be zeroed out and the in channel to be empty.
+func (r *runner) waitForDrain() {
+	for len(r.limiter) > 0 || len(r.inChan) > 0 {
+		// Wait for the drain.
+	}
+}
+
+// startWork Runs the before function and starts processing until one of three things happen.
+// 1. A term signal is received or cancellation of context.
+// 2. Stop function is called.
+// 3. Worker returns an error.
+func (r *runner) startWork() {
+	var err error
+	if err = r.beforeFunc(r.ctx); err != nil {
+		r.errChan <- err
+		return
+	}
+	if r.timeout > 0 {
+		r.ctx, r.cancel = context.WithTimeout(r.ctx, r.timeout)
+	}
+	r.wg.Add(1)
+	go func() {
+		var workerWG = new(sync.WaitGroup)
+		var closeOnce = new(sync.Once)
+		defer func() {
+			workerWG.Wait()
+			r.errChan <- err
+			closeOnce.Do(func() {
+				if r.outChan != nil {
+					close(r.outChan)
+				}
+			})
+			r.wg.Done()
+		}()
+		for in := range r.inChan {
+			select {
+			case <-r.ctx.Done():
+				err = context.Canceled
+				continue
+			default:
+				r.limiter <- struct{}{}
+				workerWG.Add(1)
+				go func() {
+					defer func() {
+						<-r.limiter
+						workerWG.Done()
+					}()
+					if workErr := r.workFunc(in, r.outChan); workErr != nil {
+						r.once.Do(func() {
+							errors.As(err, &workErr)
+							r.cancel()
+							return
+						})
+					}
+				}()
+			}
+		}
+	}()
 }

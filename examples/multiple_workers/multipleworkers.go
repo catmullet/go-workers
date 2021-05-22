@@ -5,50 +5,80 @@ package main
 import (
 	"context"
 	"fmt"
-	worker "github.com/catmullet/go-workers"
+	"github.com/catmullet/go-workers"
 	"math/rand"
+	"sync"
+)
+
+var (
+	count = make(map[string]int)
+	mut   = sync.RWMutex{}
 )
 
 func main() {
 	ctx := context.Background()
-	workerOne := worker.NewWorker(ctx, NewWorkerOne(), 1000).Work()
-	workerTwo := worker.NewWorker(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Work()
 
-	for i := 0; i < 1000000; i++ {
-		workerOne.Send(rand.Intn(100))
-	}
+	workerOne := workers.NewRunner(ctx, NewWorkerOne(), 1000).Start()
+	workerTwo := workers.NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
 
-	if err := workerOne.Close(); err != nil {
+	go func() {
+		for i := 0; i < 100000; i++ {
+			workerOne.Send(rand.Intn(100))
+		}
+		if err := workerOne.Wait(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	if err := workerTwo.Wait(); err != nil {
 		fmt.Println(err)
 	}
 
-	if err := workerTwo.Close(); err != nil {
-		fmt.Println(err)
-	}
-
+	fmt.Println("worker_one", count["worker_one"])
+	fmt.Println("worker_two", count["worker_two"])
 	fmt.Println("finished")
 }
 
-type WorkerOne struct{}
-type WorkerTwo struct{}
+type WorkerOne struct {
+}
+type WorkerTwo struct {
+}
 
-func NewWorkerOne() *WorkerOne {
+func NewWorkerOne() workers.Worker {
 	return &WorkerOne{}
 }
 
-func NewWorkerTwo() *WorkerTwo {
+func NewWorkerTwo() workers.Worker {
 	return &WorkerTwo{}
 }
 
-func (wo *WorkerOne) Work(w *worker.Worker, in interface{}) error {
+func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
+	var workerOne = "worker_one"
+	mut.Lock()
+	if val, ok := count[workerOne]; ok {
+		count[workerOne] = val + 1
+	} else {
+		count[workerOne] = 1
+	}
+	mut.Unlock()
+
 	total := in.(int) * 2
-	w.Println(fmt.Sprintf("%d * 2 = %d", in.(int), total))
-	w.Out(total)
+	fmt.Println("worker1", fmt.Sprintf("%d * 2 = %d", in.(int), total))
+	out <- total
 	return nil
 }
 
-func (wt *WorkerTwo) Work(w *worker.Worker, in interface{}) error {
+func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
+	var workerTwo = "worker_two"
+	mut.Lock()
+	if val, ok := count[workerTwo]; ok {
+		count[workerTwo] = val + 1
+	} else {
+		count[workerTwo] = 1
+	}
+	mut.Unlock()
+
 	totalFromWorkerOne := in.(int)
-	w.Println(fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
+	fmt.Println("worker2", fmt.Sprintf("%d * 4 = %d", totalFromWorkerOne, totalFromWorkerOne*4))
 	return nil
 }

@@ -5,27 +5,24 @@ package main
 import (
 	"context"
 	"fmt"
-	worker "github.com/catmullet/go-workers"
+	"github.com/catmullet/go-workers"
 	"math/rand"
 )
 
 func main() {
 	ctx := context.Background()
-	workerOne := worker.NewWorker(ctx, NewWorkerOne(2), 10).
-		Work()
-	workerTwo := worker.NewWorker(ctx, NewWorkerTwo(4), 10).
-		InFrom(workerOne).
-		Work()
+	workerOne := workers.NewRunner(ctx, NewWorkerOne(2), 100).Start()
+	workerTwo := workers.NewRunner(ctx, NewWorkerTwo(4), 100).InFrom(workerOne).Start()
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 15; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	if err := workerOne.Close(); err != nil {
+	if err := workerOne.Wait(); err != nil {
 		fmt.Println(err)
 	}
 
-	if err := workerTwo.Close(); err != nil {
+	if err := workerTwo.Wait(); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -37,27 +34,27 @@ type WorkerTwo struct {
 	amountToMultiply int
 }
 
-func NewWorkerOne(amountToMultiply int) *WorkerOne {
+func NewWorkerOne(amountToMultiply int) workers.Worker {
 	return &WorkerOne{
 		amountToMultiply: amountToMultiply,
 	}
 }
 
-func NewWorkerTwo(amountToMultiply int) *WorkerTwo {
+func NewWorkerTwo(amountToMultiply int) workers.Worker {
 	return &WorkerTwo{
 		amountToMultiply,
 	}
 }
 
-func (wo *WorkerOne) Work(w *worker.Worker, in interface{}) error {
+func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
 	total := in.(int) * wo.amountToMultiply
-	fmt.Println(fmt.Sprintf("%d * %d = %d", in.(int), wo.amountToMultiply, total))
-	w.Out(total)
+	fmt.Println("worker1", fmt.Sprintf("%d * %d = %d", in.(int), wo.amountToMultiply, total))
+	out <- total
 	return nil
 }
 
-func (wt *WorkerTwo) Work(w *worker.Worker, in interface{}) error {
+func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
 	totalFromWorkerOne := in.(int)
-	fmt.Println(fmt.Sprintf("%d * %d = %d", totalFromWorkerOne, wt.amountToMultiply, totalFromWorkerOne*wt.amountToMultiply))
+	fmt.Println("worker2", fmt.Sprintf("%d * %d = %d", totalFromWorkerOne, wt.amountToMultiply, totalFromWorkerOne*wt.amountToMultiply))
 	return nil
 }
