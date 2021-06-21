@@ -156,10 +156,10 @@ func (r *runner) SetTimeout(duration time.Duration) Runner {
 
 // Wait calls stop on workers and waits for the channel to drain.
 // !!Should only be called when certain nothing will send to worker.
-func (r *runner) Wait() (err error) {
+func (r *runner) Wait() error {
 	r.waitForDrain()
-	if err = <-r.Stop(); err != nil || !errors.Is(err, context.Canceled) {
-		return
+	if err := <-r.Stop(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
 	}
 	return nil
 }
@@ -216,6 +216,8 @@ func (r *runner) startWork() {
 	go func() {
 		var workerWG = new(sync.WaitGroup)
 		var closeOnce = new(sync.Once)
+
+		// write out error if not nil on exit.
 		defer func() {
 			workerWG.Wait()
 			r.errChan <- err
@@ -227,27 +229,22 @@ func (r *runner) startWork() {
 			r.wg.Done()
 		}()
 		for in := range r.inChan {
-			select {
-			case <-r.ctx.Done():
-				err = context.Canceled
-				continue
-			default:
-				r.limiter <- struct{}{}
-				workerWG.Add(1)
-				go func() {
-					defer func() {
-						<-r.limiter
-						workerWG.Done()
-					}()
-					if workErr := r.workFunc(in, r.outChan); workErr != nil {
-						r.once.Do(func() {
-							errors.As(err, &workErr)
-							r.cancel()
-							return
-						})
-					}
+			input := in
+			r.limiter <- struct{}{}
+			workerWG.Add(1)
+			go func() {
+				defer func() {
+					<-r.limiter
+					workerWG.Done()
 				}()
-			}
+				if err := r.workFunc(input, r.outChan); err != nil {
+					r.once.Do(func() {
+						r.errChan <- err
+						r.cancel()
+						return
+					})
+				}
+			}()
 		}
 	}()
 }
