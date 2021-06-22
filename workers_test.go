@@ -14,32 +14,37 @@ import (
 )
 
 const (
-	workerCount   = 1000
+	workerCount   = 100000
 	workerTimeout = time.Millisecond * 300
 	runTimes      = 100000
 )
 
 type WorkerOne struct {
+	Count int
+	sync.Mutex
 }
 type WorkerTwo struct {
+	Count int
+	sync.Mutex
 }
 
-func NewWorkerOne() Worker {
+func NewWorkerOne() *WorkerOne {
 	return &WorkerOne{}
 }
 
-func NewWorkerTwo() Worker {
+func NewWorkerTwo() *WorkerTwo {
 	return &WorkerTwo{}
 }
 
+func (wo *WorkerOne) CurrentCount() int {
+	wo.Lock()
+	defer wo.Unlock()
+	return wo.Count
+}
+
 func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
-	var workerOne = "worker_one"
 	mut.Lock()
-	if val, ok := count[workerOne]; ok {
-		count[workerOne] = val + 1
-	} else {
-		count[workerOne] = 1
-	}
+	wo.Count = wo.Count + 1
 	mut.Unlock()
 
 	total := in.(int) * 2
@@ -47,20 +52,20 @@ func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
 	return nil
 }
 
+func (wt *WorkerTwo) CurrentCount() int {
+	wt.Lock()
+	defer wt.Unlock()
+	return wt.Count
+}
+
 func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
-	var workerTwo = "worker_two"
 	mut.Lock()
-	if val, ok := count[workerTwo]; ok {
-		count[workerTwo] = val + 1
-	} else {
-		count[workerTwo] = 1
-	}
+	wt.Count = wt.Count + 1
 	mut.Unlock()
 	return nil
 }
 
 var (
-	count               = make(map[string]int)
 	mut                 = sync.RWMutex{}
 	err                 = errors.New("test error")
 	deadline            = func() time.Time { return time.Now().Add(workerTimeout) }
@@ -184,24 +189,25 @@ func TestWorkers(t *testing.T) {
 				workerOne.Send(i)
 			}
 
-			if err := workerOne.Wait(); err != nil && !tt.errExpected {
-				fmt.Println(err)
-				t.Fail()
+			if err := workerOne.Wait(); err != nil && (!tt.errExpected) {
+				t.Error(err)
 			}
 			if err := workerTwo.Wait(); err != nil && !tt.errExpected {
-				fmt.Println(err)
-				t.Fail()
+				t.Error(err)
 			}
 		})
 	}
 }
 
-func TestWorkersFinish(t *testing.T) {
+func TestWorkersFinish100(t *testing.T) {
+	const workCount = 100
 	ctx := context.Background()
-	workerOne := NewRunner(ctx, NewWorkerOne(), 1000).Start()
-	workerTwo := NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
+	w1 := NewWorkerOne()
+	w2 := NewWorkerTwo()
+	workerOne := NewRunner(ctx, w1, 1000).Start()
+	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < workCount; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 
@@ -213,28 +219,135 @@ func TestWorkersFinish(t *testing.T) {
 		fmt.Println(err)
 	}
 
-	if count["worker_one"] != 100000 {
-		fmt.Println("worker one failed to finish,", "worker_one count", count["worker_one"], "/ 100000")
+	if w1.CurrentCount() != workCount {
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
 		t.Fail()
 	}
-	if count["worker_two"] != 100000 {
-		fmt.Println("worker two failed to finish,", "worker_two count", count["worker_two"], "/ 100000")
+	if w2.CurrentCount() != workCount {
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
 		t.Fail()
 	}
+
+	t.Logf("worker_one count: %d, worker_two count: %d", w1.CurrentCount(), w2.CurrentCount())
 }
 
-func BenchmarkGoWorkers(b *testing.B) {
+func TestWorkersFinish100000(t *testing.T) {
+	const workCount = 100000
 	ctx := context.Background()
-	worker := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount).Start()
+	w1 := NewWorkerOne()
+	w2 := NewWorkerTwo()
+	workerOne := NewRunner(ctx, w1, 1000).Start()
+	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
 
-	b.StartTimer()
+	for i := 0; i < workCount; i++ {
+		workerOne.Send(rand.Intn(100))
+	}
+
+	if err := workerOne.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if err := workerTwo.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if w1.CurrentCount() != workCount {
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
+		t.Fail()
+	}
+	if w2.CurrentCount() != workCount {
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
+		t.Fail()
+	}
+
+	t.Logf("worker_one count: %d, worker_two count: %d", w1.CurrentCount(), w2.CurrentCount())
+}
+
+func TestWorkersFinish1000000(t *testing.T) {
+	const workCount = 1000000
+	ctx := context.Background()
+	w1 := NewWorkerOne()
+	w2 := NewWorkerTwo()
+	workerOne := NewRunner(ctx, w1, 1000).Start()
+	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
+
+	for i := 0; i < workCount; i++ {
+		workerOne.Send(rand.Intn(100))
+	}
+
+	if err := workerOne.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if err := workerTwo.Wait(); err != nil {
+		fmt.Println(err)
+	}
+
+	if w1.CurrentCount() != workCount {
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
+		t.Fail()
+	}
+	if w2.CurrentCount() != workCount {
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
+		t.Fail()
+	}
+
+	t.Logf("worker_one count: %d, worker_two count: %d", w1.CurrentCount(), w2.CurrentCount())
+}
+
+func BenchmarkGoWorkers1to1(b *testing.B) {
+	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000).Start()
+
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < runTimes; j++ {
+		for j := 0; j < 1000; j++ {
 			worker.Send(j)
 		}
 	}
-
 	b.StopTimer()
+
+	if err := worker.Wait(); err != nil {
+		b.Error(err)
+	}
+}
+
+func Benchmark100GoWorkers(b *testing.B) {
+	b.ReportAllocs()
+	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 100).Start()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		worker.Send(i)
+	}
+
+	if err := worker.Wait(); err != nil {
+		b.Error(err)
+	}
+}
+
+func Benchmark1000GoWorkers(b *testing.B) {
+	b.ReportAllocs()
+	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000).Start()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		worker.Send(i)
+	}
+
+	if err := worker.Wait(); err != nil {
+		b.Error(err)
+	}
+}
+
+func Benchmark10000GoWorkers(b *testing.B) {
+	b.ReportAllocs()
+	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 10000).Start()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		worker.Send(i)
+	}
+
 	if err := worker.Wait(); err != nil {
 		b.Error(err)
 	}
