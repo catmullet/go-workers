@@ -237,11 +237,10 @@ func (r *runner) startWork() {
 					<-r.limiter
 					workerWG.Done()
 				}()
-				if err := r.workFunc(input, r.outChan); err != nil {
+				if err := r.afterFunc(r.ctx, r.workFunc(input, r.outChan)); err != nil {
 					r.once.Do(func() {
 						r.errChan <- err
 						r.cancel()
-						return
 					})
 				}
 			}()
