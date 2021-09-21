@@ -1,16 +1,18 @@
-package workers
+package workers_test
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/catmullet/go-workers"
 )
 
 const (
@@ -20,11 +22,11 @@ const (
 )
 
 type WorkerOne struct {
-	Count int
+	Count int32
 	sync.Mutex
 }
 type WorkerTwo struct {
-	Count int
+	Count int32
 	sync.Mutex
 }
 
@@ -37,15 +39,11 @@ func NewWorkerTwo() *WorkerTwo {
 }
 
 func (wo *WorkerOne) CurrentCount() int {
-	wo.Lock()
-	defer wo.Unlock()
-	return wo.Count
+	return int(wo.Count)
 }
 
-func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
-	mut.Lock()
-	wo.Count = wo.Count + 1
-	mut.Unlock()
+func (wo *WorkerOne) Work(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	atomic.AddInt32(&wo.Count, 1)
 
 	total := in.(int) * 2
 	out <- total
@@ -53,15 +51,11 @@ func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
 }
 
 func (wt *WorkerTwo) CurrentCount() int {
-	wt.Lock()
-	defer wt.Unlock()
-	return wt.Count
+	return int(wt.Count)
 }
 
-func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
-	mut.Lock()
-	wt.Count = wt.Count + 1
-	mut.Unlock()
+func (wt *WorkerTwo) Work(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	atomic.AddInt32(&wt.Count, 1)
 	return nil
 }
 
@@ -109,10 +103,10 @@ var (
 		},
 	}
 
-	getWorker = func(ctx context.Context, wt workerTest) Runner {
-		worker := NewRunner(ctx, wt.worker, wt.numWorkers)
+	getWorker = func(ctx context.Context, wt workerTest) *workers.Runner {
+		worker := workers.NewRunner(ctx, wt.worker, wt.numWorkers, wt.numWorkers)
 		if wt.timeout > 0 {
-			worker.SetTimeout(wt.timeout)
+			worker.SetWorkerTimeout(wt.timeout)
 		}
 		if wt.deadline != nil {
 			worker.SetDeadline(wt.deadline())
@@ -125,41 +119,41 @@ type workerTest struct {
 	name        string
 	timeout     time.Duration
 	deadline    func() time.Time
-	worker      Worker
+	worker      workers.Worker
 	numWorkers  int64
 	testSignal  bool
 	errExpected bool
 }
 
 type TestWorkerObject struct {
-	workFunc func(in interface{}, out chan<- interface{}) error
+	workFunc func(ctx context.Context, in interface{}, out chan<- interface{}) error
 }
 
-func NewTestWorkerObject(wf func(in interface{}, out chan<- interface{}) error) Worker {
+func NewTestWorkerObject(wf func(ctx context.Context, in interface{}, out chan<- interface{}) error) workers.Worker {
 	return &TestWorkerObject{wf}
 }
 
-func (tw *TestWorkerObject) Work(in interface{}, out chan<- interface{}) error {
-	return tw.workFunc(in, out)
+func (tw *TestWorkerObject) Work(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	return tw.workFunc(ctx, in, out)
 }
 
-func workBasicNoOut() func(in interface{}, out chan<- interface{}) error {
-	return func(in interface{}, out chan<- interface{}) error {
+func workBasicNoOut() func(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	return func(ctx context.Context, in interface{}, out chan<- interface{}) error {
 		_ = in.(int)
 		return nil
 	}
 }
 
-func workBasic() func(in interface{}, out chan<- interface{}) error {
-	return func(in interface{}, out chan<- interface{}) error {
+func workBasic() func(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	return func(ctx context.Context, in interface{}, out chan<- interface{}) error {
 		i := in.(int)
 		out <- i
 		return nil
 	}
 }
 
-func workWithError(err error) func(in interface{}, out chan<- interface{}) error {
-	return func(in interface{}, out chan<- interface{}) error {
+func workWithError(err error) func(ctx context.Context, in interface{}, out chan<- interface{}) error {
+	return func(ctx context.Context, in interface{}, out chan<- interface{}) error {
 		i := in.(int)
 		total := i * rand.Intn(1000)
 		if i == 100 {
@@ -181,20 +175,23 @@ func TestWorkers(t *testing.T) {
 	for _, tt := range workerTestScenarios {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			workerOne := getWorker(ctx, tt).Start()
+			workerOne := getWorker(ctx, tt)
 			// always need a consumer for the out tests so using basic here.
-			workerTwo := NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount).InFrom(workerOne).Start()
+			workerTwo := workers.NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount, workerCount).InFrom(workerOne)
+
+			if err := workerOne.Start(); err != nil && !tt.errExpected {
+				t.Error(err)
+			}
+			if err := workerTwo.Start(); err != nil && !tt.errExpected {
+				t.Error(err)
+			}
 
 			for i := 0; i < runTimes; i++ {
 				workerOne.Send(i)
 			}
 
-			if err := workerOne.Wait(); err != nil && (!tt.errExpected) {
-				t.Error(err)
-			}
-			if err := workerTwo.Wait(); err != nil && !tt.errExpected {
-				t.Error(err)
-			}
+			workerOne.Wait().Stop()
+			workerTwo.Wait().Stop()
 		})
 	}
 }
@@ -204,27 +201,25 @@ func TestWorkersFinish100(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := NewRunner(ctx, w1, 1000).Start()
-	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
+	workerOne := workers.NewRunner(ctx, w1, 1000, 10)
+	workerTwo := workers.NewRunner(ctx, w2, 1000, 10000).InFrom(workerOne)
+	workerOne.Start()
+	workerTwo.Start()
 
 	for i := 0; i < workCount; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	if err := workerOne.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerOne.Wait().Stop()
 
-	if err := workerTwo.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerTwo.Wait().Stop()
 
 	if w1.CurrentCount() != workCount {
-		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 	if w2.CurrentCount() != workCount {
-		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 
@@ -236,27 +231,25 @@ func TestWorkersFinish100000(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := NewRunner(ctx, w1, 1000).Start()
-	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
+	workerOne := workers.NewRunner(ctx, w1, 1000, 2000)
+	workerTwo := workers.NewRunner(ctx, w2, 1000, 1).InFrom(workerOne)
+	workerOne.Start()
+	workerTwo.Start()
 
 	for i := 0; i < workCount; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	if err := workerOne.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerOne.Wait().Stop()
 
-	if err := workerTwo.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerTwo.Wait().Stop()
 
 	if w1.CurrentCount() != workCount {
-		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 	if w2.CurrentCount() != workCount {
-		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 
@@ -268,27 +261,25 @@ func TestWorkersFinish1000000(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := NewRunner(ctx, w1, 1000).Start()
-	workerTwo := NewRunner(ctx, w2, 1000).InFrom(workerOne).Start()
+	workerOne := workers.NewRunner(ctx, w1, 1000, 1000)
+	workerTwo := workers.NewRunner(ctx, w2, 1000, 500).InFrom(workerOne)
+	workerOne.Start()
+	workerTwo.Start()
 
 	for i := 0; i < workCount; i++ {
 		workerOne.Send(rand.Intn(100))
 	}
 
-	if err := workerOne.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerOne.Wait().Stop()
 
-	if err := workerTwo.Wait(); err != nil {
-		fmt.Println(err)
-	}
+	workerTwo.Wait().Stop()
 
 	if w1.CurrentCount() != workCount {
-		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/ 100000")
+		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 	if w2.CurrentCount() != workCount {
-		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/ 100000")
+		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/", workCount)
 		t.Fail()
 	}
 
@@ -296,7 +287,8 @@ func TestWorkersFinish1000000(t *testing.T) {
 }
 
 func BenchmarkGoWorkers1to1(b *testing.B) {
-	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000).Start()
+	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 2000)
+	worker.Start()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -306,49 +298,44 @@ func BenchmarkGoWorkers1to1(b *testing.B) {
 	}
 	b.StopTimer()
 
-	if err := worker.Wait(); err != nil {
-		b.Error(err)
-	}
+	worker.Wait().Stop()
 }
 
 func Benchmark100GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 100).Start()
+	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 100, 200)
+	worker.Start()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		worker.Send(i)
 	}
 
-	if err := worker.Wait(); err != nil {
-		b.Error(err)
-	}
+	worker.Wait().Stop()
 }
 
 func Benchmark1000GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000).Start()
+	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 500)
+	worker.Start()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		worker.Send(i)
 	}
 
-	if err := worker.Wait(); err != nil {
-		b.Error(err)
-	}
+	worker.Wait().Stop()
 }
 
 func Benchmark10000GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 10000).Start()
+	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 10000, 5000)
+	worker.Start()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		worker.Send(i)
 	}
 
-	if err := worker.Wait(); err != nil {
-		b.Error(err)
-	}
+	worker.Wait().Stop()
 }
