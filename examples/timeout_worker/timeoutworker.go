@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -5,32 +6,28 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/catmullet/go-workers"
 	"time"
+
+	"github.com/catmullet/go-workers"
 )
 
 func main() {
 	ctx := context.Background()
 
-	timeoutWorker := workers.NewRunner(ctx, NewTimeoutWorker(), 10).SetTimeout(100 * time.Millisecond).Start()
+	timeoutWorker := workers.NewRunner(ctx, work, 10, 10).SetWorkerTimeout(100 * time.Millisecond)
+	err := timeoutWorker.Start()
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	for i := 0; i < 1000000; i++ {
 		timeoutWorker.Send("hello")
 	}
 
-	err := timeoutWorker.Wait()
-	if err != nil {
-		fmt.Println(err)
-	}
+	timeoutWorker.Wait().Stop()
 }
 
-type TimeoutWorker struct{}
-
-func NewTimeoutWorker() workers.Worker {
-	return &TimeoutWorker{}
-}
-
-func (tw *TimeoutWorker) Work(in interface{}, out chan<- interface{}) error {
+func work(ctx context.Context, in interface{}, out chan<- interface{}) error {
 	fmt.Println(in)
 	time.Sleep(1 * time.Second)
 	return nil
