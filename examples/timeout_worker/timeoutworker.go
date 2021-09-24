@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 func main() {
 	ctx := context.Background()
 
-	timeoutWorker := workers.NewRunner(ctx, work, 10, 10).SetWorkerTimeout(100 * time.Millisecond)
+	timeoutWorker := gorkers.NewRunner(ctx, work, 10, 10).SetWorkerTimeout(100 * time.Millisecond)
 	err := timeoutWorker.Start()
 	if err != nil {
 		fmt.Println(err)

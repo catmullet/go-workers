@@ -8,14 +8,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 func main() {
 	ctx := context.Background()
 	t := time.Now()
 
-	deadlineWorker := workers.NewRunner(ctx, NewDeadlineWorker().Work, 100, 100).
+	deadlineWorker := gorkers.NewRunner(ctx, NewDeadlineWorker().Work, 100, 100).
 		SetDeadline(t.Add(200 * time.Millisecond))
 	deadlineWorker.Start()
 	if err := deadlineWorker.Start(); err != nil {

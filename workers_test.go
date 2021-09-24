@@ -1,4 +1,4 @@
-package workers_test
+package gorkers_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 const (
@@ -103,8 +103,8 @@ var (
 		},
 	}
 
-	getWorker = func(ctx context.Context, wt workerTest) *workers.Runner {
-		worker := workers.NewRunner(ctx, wt.worker, wt.numWorkers, wt.numWorkers)
+	getWorker = func(ctx context.Context, wt workerTest) *gorkers.Runner {
+		worker := gorkers.NewRunner(ctx, wt.worker, wt.numWorkers, wt.numWorkers)
 		if wt.timeout > 0 {
 			worker.SetWorkerTimeout(wt.timeout)
 		}
@@ -119,7 +119,7 @@ type workerTest struct {
 	name        string
 	timeout     time.Duration
 	deadline    func() time.Time
-	worker      workers.Worker
+	worker      gorkers.WorkFunc
 	numWorkers  int64
 	testSignal  bool
 	errExpected bool
@@ -129,8 +129,8 @@ type TestWorkerObject struct {
 	workFunc func(ctx context.Context, in interface{}, out chan<- interface{}) error
 }
 
-func NewTestWorkerObject(wf func(ctx context.Context, in interface{}, out chan<- interface{}) error) workers.Worker {
-	return &TestWorkerObject{wf}
+func NewTestWorkerObject(wf func(ctx context.Context, in interface{}, out chan<- interface{}) error) gorkers.WorkFunc {
+	return wf
 }
 
 func (tw *TestWorkerObject) Work(ctx context.Context, in interface{}, out chan<- interface{}) error {
@@ -177,7 +177,7 @@ func TestWorkers(t *testing.T) {
 			ctx := context.Background()
 			workerOne := getWorker(ctx, tt)
 			// always need a consumer for the out tests so using basic here.
-			workerTwo := workers.NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount, workerCount).InFrom(workerOne)
+			workerTwo := gorkers.NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount, workerCount).InFrom(workerOne)
 
 			if err := workerOne.Start(); err != nil && !tt.errExpected {
 				t.Error(err)
@@ -201,8 +201,8 @@ func TestWorkersFinish100(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := workers.NewRunner(ctx, w1, 1000, 10)
-	workerTwo := workers.NewRunner(ctx, w2, 1000, 10000).InFrom(workerOne)
+	workerOne := gorkers.NewRunner(ctx, w1.Work, 1000, 10)
+	workerTwo := gorkers.NewRunner(ctx, w2.Work, 1000, 10000).InFrom(workerOne)
 	workerOne.Start()
 	workerTwo.Start()
 
@@ -231,8 +231,8 @@ func TestWorkersFinish100000(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := workers.NewRunner(ctx, w1, 1000, 2000)
-	workerTwo := workers.NewRunner(ctx, w2, 1000, 1).InFrom(workerOne)
+	workerOne := gorkers.NewRunner(ctx, w1.Work, 1000, 2000)
+	workerTwo := gorkers.NewRunner(ctx, w2.Work, 1000, 1).InFrom(workerOne)
 	workerOne.Start()
 	workerTwo.Start()
 
@@ -261,8 +261,8 @@ func TestWorkersFinish1000000(t *testing.T) {
 	ctx := context.Background()
 	w1 := NewWorkerOne()
 	w2 := NewWorkerTwo()
-	workerOne := workers.NewRunner(ctx, w1, 1000, 1000)
-	workerTwo := workers.NewRunner(ctx, w2, 1000, 500).InFrom(workerOne)
+	workerOne := gorkers.NewRunner(ctx, w1.Work, 1000, 1000)
+	workerTwo := gorkers.NewRunner(ctx, w2.Work, 1000, 500).InFrom(workerOne)
 	workerOne.Start()
 	workerTwo.Start()
 
@@ -287,7 +287,7 @@ func TestWorkersFinish1000000(t *testing.T) {
 }
 
 func BenchmarkGoWorkers1to1(b *testing.B) {
-	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 2000)
+	worker := gorkers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 2000)
 	worker.Start()
 
 	b.ResetTimer()
@@ -303,7 +303,7 @@ func BenchmarkGoWorkers1to1(b *testing.B) {
 
 func Benchmark100GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 100, 200)
+	worker := gorkers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 100, 200)
 	worker.Start()
 
 	b.ResetTimer()
@@ -316,7 +316,7 @@ func Benchmark100GoWorkers(b *testing.B) {
 
 func Benchmark1000GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 500)
+	worker := gorkers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 1000, 500)
 	worker.Start()
 
 	b.ResetTimer()
@@ -329,7 +329,7 @@ func Benchmark1000GoWorkers(b *testing.B) {
 
 func Benchmark10000GoWorkers(b *testing.B) {
 	b.ReportAllocs()
-	worker := workers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 10000, 5000)
+	worker := gorkers.NewRunner(context.Background(), NewTestWorkerObject(workBasicNoOut()), 10000, 5000)
 	worker.Start()
 
 	b.ResetTimer()

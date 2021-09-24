@@ -9,13 +9,13 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 func main() {
 	ctx := context.Background()
 	t := time.Now()
-	rnr := workers.NewRunner(ctx, work, 100, 100)
+	rnr := gorkers.NewRunner(ctx, work, 100, 100)
 
 	if err := rnr.Start(); err != nil {
 		fmt.Println(err)

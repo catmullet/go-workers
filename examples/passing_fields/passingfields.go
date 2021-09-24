@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 func main() {
 	ctx := context.Background()
-	workerOne := workers.NewRunner(ctx, NewWorkerOne(2).Work, 100, 100)
-	workerTwo := workers.NewRunner(ctx, NewWorkerTwo(4).Work, 100, 100).InFrom(workerOne)
+	workerOne := gorkers.NewRunner(ctx, NewWorkerOne(2).Work, 100, 100)
+	workerTwo := gorkers.NewRunner(ctx, NewWorkerTwo(4).Work, 100, 100).InFrom(workerOne)
 	if err := workerOne.Start(); err != nil {
 		fmt.Println(err)
 	}

@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/catmullet/go-workers"
+	"github.com/guilhem/gorkers"
 )
 
 var (
@@ -20,8 +20,8 @@ var (
 func main() {
 	ctx := context.Background()
 
-	workerOne := workers.NewRunner(ctx, NewWorkerOne().Work, 1000, 1000)
-	workerTwo := workers.NewRunner(ctx, NewWorkerTwo().Work, 1000, 1000).InFrom(workerOne)
+	workerOne := gorkers.NewRunner(ctx, NewWorkerOne().Work, 1000, 1000)
+	workerTwo := gorkers.NewRunner(ctx, NewWorkerTwo().Work, 1000, 1000).InFrom(workerOne)
 	if err := workerOne.Start(); err != nil {
 		fmt.Println(err)
 	}

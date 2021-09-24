@@ -1,4 +1,4 @@
-package workers
+package gorkers
 
 import (
 	"context"
@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// Worker Contains the work function.
-// Work() get input and could put in outChan for followers.
+// WorkFunc get input and could put in outChan for followers.
 // ⚠️ outChan could be closed if follower is stoped before producer.
 // error returned can be process by afterFunc but will be ignored by default.
-type Worker interface {
-	Work(ctx context.Context, in interface{}, out chan<- interface{}) error
-}
+type WorkFunc func(ctx context.Context, in interface{}, out chan<- interface{}) error
+
+type BeforeFunc func(ctx context.Context) error
+type AfterFunc func(ctx context.Context, in interface{}, err error) error
 
 type Runner struct {
 	ctx         context.Context
@@ -24,9 +24,9 @@ type Runner struct {
 	outChan     chan interface{}
 	limiter     chan struct{}
 
-	afterFunc  func(ctx context.Context, err error) error
-	workFunc   func(ctx context.Context, in interface{}, out chan<- interface{}) error
-	beforeFunc func(ctx context.Context) error
+	afterFunc  AfterFunc
+	workFunc   WorkFunc
+	beforeFunc BeforeFunc
 
 	timeout time.Duration
 
@@ -36,7 +36,7 @@ type Runner struct {
 }
 
 // NewRunner Factory function for a new Runner.  The Runner will handle running the workers logic.
-func NewRunner(ctx context.Context, w Worker, numWorkers int64, buffer int64) *Runner {
+func NewRunner(ctx context.Context, w WorkFunc, numWorkers int64, buffer int64) *Runner {
 	runnerCtx, runnerCancel := context.WithCancel(ctx)
 	inputCtx, inputCancel := context.WithCancel(runnerCtx)
 
@@ -48,8 +48,8 @@ func NewRunner(ctx context.Context, w Worker, numWorkers int64, buffer int64) *R
 		inChan:      make(chan interface{}, buffer),
 		outChan:     nil,
 		limiter:     make(chan struct{}, numWorkers),
-		afterFunc:   func(ctx context.Context, err error) error { return nil },
-		workFunc:    w.Work,
+		afterFunc:   func(ctx context.Context, in interface{}, err error) error { return nil },
+		workFunc:    w,
 		beforeFunc:  func(ctx context.Context) error { return nil },
 		numWorkers:  numWorkers,
 		started:     new(sync.Once),
@@ -97,7 +97,7 @@ func (r *Runner) Start() error {
 }
 
 // BeforeFunc Function to be run before worker starts processing.
-func (r *Runner) BeforeFunc(f func(ctx context.Context) error) *Runner {
+func (r *Runner) BeforeFunc(f BeforeFunc) *Runner {
 	r.beforeFunc = f
 	return r
 }
@@ -107,7 +107,7 @@ func (r *Runner) BeforeFunc(f func(ctx context.Context) error) *Runner {
 // input can be retreive with context value:
 //   ctx.Value(workers.InputKey{})
 // ⚠️ If an error is returned it stop Runner execution.
-func (r *Runner) AfterFunc(f func(ctx context.Context, err error) error) *Runner {
+func (r *Runner) AfterFunc(f AfterFunc) *Runner {
 	r.afterFunc = f
 	return r
 }
@@ -156,8 +156,6 @@ func (r *Runner) Stop() *Runner {
 	return r
 }
 
-type InputKey struct{}
-
 // work starts processing input and limits worker instance number.
 func (r *Runner) work() {
 	var wg sync.WaitGroup
@@ -172,30 +170,33 @@ func (r *Runner) work() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case input, open := <-r.inChan:
-			if !open {
+		case r.limiter <- struct{}{}:
+			// slot available for worker
+			select {
+			case <-r.ctx.Done():
 				return
-			}
-			wg.Add(1)
-
-			r.limiter <- struct{}{}
-
-			inputCtx := context.WithValue(r.ctx, InputKey{}, input)
-			workCtx, workCancel := context.WithCancel(inputCtx)
-			if r.timeout > 0 {
-				workCtx, workCancel = context.WithTimeout(inputCtx, r.timeout)
-			}
-
-			go func() {
-				defer func() {
-					<-r.limiter
-					workCancel()
-					wg.Done()
-				}()
-				if err := r.afterFunc(inputCtx, r.workFunc(workCtx, input, r.outChan)); err != nil {
-					r.cancel()
+			case input, open := <-r.inChan:
+				if !open {
+					return
 				}
-			}()
+				wg.Add(1)
+
+				workCtx, workCancel := context.WithCancel(r.ctx)
+				if r.timeout > 0 {
+					workCtx, workCancel = context.WithTimeout(r.ctx, r.timeout)
+				}
+
+				go func() {
+					defer func() {
+						<-r.limiter
+						workCancel()
+						wg.Done()
+					}()
+					if err := r.afterFunc(workCtx, input, r.workFunc(workCtx, input, r.outChan)); err != nil {
+						r.cancel()
+					}
+				}()
+			}
 		}
 	}
 }
