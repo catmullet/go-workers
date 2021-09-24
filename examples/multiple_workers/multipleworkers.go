@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -5,9 +6,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/catmullet/go-workers"
 	"math/rand"
 	"sync"
+
+	"github.com/guilhem/gorkers"
 )
 
 var (
@@ -18,19 +20,25 @@ var (
 func main() {
 	ctx := context.Background()
 
-	workerOne := workers.NewRunner(ctx, NewWorkerOne(), 1000).Start()
-	workerTwo := workers.NewRunner(ctx, NewWorkerTwo(), 1000).InFrom(workerOne).Start()
+	workerOne := gorkers.NewRunner(ctx, NewWorkerOne().Work, 1000, 1000)
+	workerTwo := gorkers.NewRunner(ctx, NewWorkerTwo().Work, 1000, 1000).InFrom(workerOne)
+	if err := workerOne.Start(); err != nil {
+		fmt.Println(err)
+	}
+	if err := workerTwo.Start(); err != nil {
+		fmt.Println(err)
+	}
 
 	go func() {
 		for i := 0; i < 100000; i++ {
 			workerOne.Send(rand.Intn(100))
 		}
-		if err := workerOne.Wait(); err != nil {
+		if err := workerOne.Wait().Stop(); err != nil {
 			fmt.Println(err)
 		}
 	}()
 
-	if err := workerTwo.Wait(); err != nil {
+	if err := workerTwo.Wait().Stop(); err != nil {
 		fmt.Println(err)
 	}
 
@@ -44,15 +52,15 @@ type WorkerOne struct {
 type WorkerTwo struct {
 }
 
-func NewWorkerOne() workers.Worker {
+func NewWorkerOne() *WorkerOne {
 	return &WorkerOne{}
 }
 
-func NewWorkerTwo() workers.Worker {
+func NewWorkerTwo() *WorkerTwo {
 	return &WorkerTwo{}
 }
 
-func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
+func (wo *WorkerOne) Work(_ context.Context, in interface{}, out chan<- interface{}) error {
 	var workerOne = "worker_one"
 	mut.Lock()
 	if val, ok := count[workerOne]; ok {
@@ -68,7 +76,7 @@ func (wo *WorkerOne) Work(in interface{}, out chan<- interface{}) error {
 	return nil
 }
 
-func (wt *WorkerTwo) Work(in interface{}, out chan<- interface{}) error {
+func (wt *WorkerTwo) Work(_ context.Context, in interface{}, out chan<- interface{}) error {
 	var workerTwo = "worker_two"
 	mut.Lock()
 	if val, ok := count[workerTwo]; ok {
