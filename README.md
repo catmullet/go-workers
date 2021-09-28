@@ -4,6 +4,7 @@
 
 <!-- [![Maintainability](https://api.codeclimate.com/v1/badges/402fee86fbd1e24defb2/maintainability)](https://codeclimate.com/github/catmullet/go-workers/maintainability) -->
 
+[![CodeQL](https://github.com/guilhem/gorkers/workflows/CodeQL/badge.svg)](https://github.com/guilhem/gorkers/actions?query=workflow%3ACodeQL)
 [![GoCover](http://gocover.io/_badge/github.com/guilhem/gorkers)](http://gocover.io/github.com/guilhem/gorkers)
 [![Go Reference](https://pkg.go.dev/badge/github.com/guilhem/gorkers.svg)](https://pkg.go.dev/github.com/guilhem/gorkers)
 
