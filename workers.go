@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 // WorkFunc get input and could put in outChan for followers.
@@ -22,7 +24,6 @@ type Runner struct {
 	inputCancel context.CancelFunc
 	inChan      chan interface{}
 	outChan     chan interface{}
-	limiter     chan struct{}
 
 	afterFunc  AfterFunc
 	workFunc   WorkFunc
@@ -30,13 +31,13 @@ type Runner struct {
 
 	timeout time.Duration
 
-	numWorkers int64
+	maxWorkers int64
 	started    *sync.Once
 	done       chan struct{}
 }
 
 // NewRunner Factory function for a new Runner.  The Runner will handle running the workers logic.
-func NewRunner(ctx context.Context, w WorkFunc, numWorkers int64, buffer int64) *Runner {
+func NewRunner(ctx context.Context, w WorkFunc, maxWorkers int64, buffer int64) *Runner {
 	runnerCtx, runnerCancel := context.WithCancel(ctx)
 	inputCtx, inputCancel := context.WithCancel(runnerCtx)
 
@@ -47,11 +48,10 @@ func NewRunner(ctx context.Context, w WorkFunc, numWorkers int64, buffer int64) 
 		inputCancel: inputCancel,
 		inChan:      make(chan interface{}, buffer),
 		outChan:     nil,
-		limiter:     make(chan struct{}, numWorkers),
 		afterFunc:   func(ctx context.Context, in interface{}, err error) error { return nil },
 		workFunc:    w,
 		beforeFunc:  func(ctx context.Context) error { return nil },
-		numWorkers:  numWorkers,
+		maxWorkers:  maxWorkers,
 		started:     new(sync.Once),
 		done:        make(chan struct{}),
 	}
@@ -160,6 +160,8 @@ func (r *Runner) Stop() *Runner {
 func (r *Runner) work() {
 	var wg sync.WaitGroup
 
+	sem := semaphore.NewWeighted(int64(r.maxWorkers))
+
 	defer func() {
 		wg.Wait()
 		r.cancel()
@@ -167,36 +169,35 @@ func (r *Runner) work() {
 	}()
 
 	for {
+		if err := sem.Acquire(r.ctx, 1); err != nil {
+			return
+		}
+
+		// slot available for worker
 		select {
 		case <-r.ctx.Done():
 			return
-		case r.limiter <- struct{}{}:
-			// slot available for worker
-			select {
-			case <-r.ctx.Done():
+		case input, open := <-r.inChan:
+			if !open {
 				return
-			case input, open := <-r.inChan:
-				if !open {
-					return
-				}
-				wg.Add(1)
-
-				workCtx, workCancel := context.WithCancel(r.ctx)
-				if r.timeout > 0 {
-					workCtx, workCancel = context.WithTimeout(r.ctx, r.timeout)
-				}
-
-				go func() {
-					defer func() {
-						<-r.limiter
-						workCancel()
-						wg.Done()
-					}()
-					if err := r.afterFunc(workCtx, input, r.workFunc(workCtx, input, r.outChan)); err != nil {
-						r.cancel()
-					}
-				}()
 			}
+			wg.Add(1)
+
+			workCtx, workCancel := context.WithCancel(r.ctx)
+			if r.timeout > 0 {
+				workCtx, workCancel = context.WithTimeout(r.ctx, r.timeout)
+			}
+
+			go func() {
+				defer func() {
+					workCancel()
+					sem.Release(1)
+					wg.Done()
+				}()
+				if err := r.afterFunc(workCtx, input, r.workFunc(workCtx, input, r.outChan)); err != nil {
+					r.cancel()
+				}
+			}()
 		}
 	}
 }
