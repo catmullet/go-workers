@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -34,6 +35,10 @@ type Runner struct {
 	maxWorkers int64
 	started    *sync.Once
 	done       chan struct{}
+
+	metricSend uint32
+	metricOK   uint32
+	metricFail uint32
 }
 
 // NewRunner Factory function for a new Runner.  The Runner will handle running the workers logic.
@@ -66,6 +71,7 @@ func (r *Runner) Send(in interface{}) error {
 	case <-r.inputCtx.Done():
 		return ErrInputClosed
 	case r.inChan <- in:
+		atomic.AddUint32(&r.metricSend, uint32(1))
 	}
 	return nil
 }
@@ -194,10 +200,24 @@ func (r *Runner) work() {
 					sem.Release(1)
 					wg.Done()
 				}()
-				if err := r.afterFunc(workCtx, input, r.workFunc(workCtx, input, r.outChan)); err != nil {
+				err := r.workFunc(workCtx, input, r.outChan)
+				if err == nil {
+					atomic.AddUint32(&r.metricOK, uint32(1))
+				} else {
+					atomic.AddUint32(&r.metricFail, uint32(1))
+				}
+				if err := r.afterFunc(workCtx, input, err); err != nil {
 					r.cancel()
 				}
 			}()
 		}
 	}
+}
+
+func (r *Runner) Metrics() (send, ok, fail uint32) {
+	return r.metricSend, r.metricOK, r.metricFail
+}
+
+func (r *Runner) Fail() bool {
+	return r.metricFail != 0
 }

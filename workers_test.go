@@ -199,6 +199,16 @@ func TestWorkers(t *testing.T) {
 
 			workerOne.Wait().Stop()
 			workerTwo.Wait().Stop()
+
+			w1s, w1ok, w1f := workerOne.Metrics()
+
+			if w1s != runTimes || w1ok+w1f != w1s {
+				t.Error("everything hasn't been process")
+			}
+
+			if (workerOne.Fail() || workerTwo.Fail()) && !tt.errExpected {
+				t.Error("something failed")
+			}
 		})
 	}
 }
