@@ -232,12 +232,11 @@ func TestWorkersFinish100(t *testing.T) {
 	workerTwo.Wait().Stop()
 
 	if w1.CurrentCount() != workCount {
-		t.Log("worker one failed to finish,", "worker_one count", w1.CurrentCount(), "/", workCount)
-		t.Fail()
+		t.Errorf("worker one failed to finish, worker_one count %d / %d", w1.CurrentCount(), workCount)
 	}
+
 	if w2.CurrentCount() != workCount {
-		t.Log("worker two failed to finish,", "worker_two count", w2.CurrentCount(), "/", workCount)
-		t.Fail()
+		t.Errorf("worker two failed to finish, worker_two count %d / %d", w2.CurrentCount(), workCount)
 	}
 
 	t.Logf("worker_one count: %d, worker_two count: %d", w1.CurrentCount(), w2.CurrentCount())
