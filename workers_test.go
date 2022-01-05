@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	workerCount   = 100000
+	workerCount   = 100
+	bufferCount   = 1000
 	workerTimeout = time.Millisecond * 300
 	runTimes      = 100000
 )
@@ -68,12 +69,14 @@ var (
 			name:       "work basic",
 			worker:     NewTestWorkerObject(workBasic()),
 			numWorkers: workerCount,
+			buffer:     bufferCount,
 		},
 		{
 			name:       "work basic with timeout",
 			timeout:    workerTimeout,
 			worker:     NewTestWorkerObject(workBasic()),
 			numWorkers: workerCount,
+			buffer:     bufferCount,
 		},
 		{
 			name:       "work basic with deadline",
@@ -86,6 +89,7 @@ var (
 			worker:      NewTestWorkerObject(workWithError(err)),
 			errExpected: true,
 			numWorkers:  workerCount,
+			buffer:      bufferCount,
 		},
 		{
 			name:        "work with return of error with timeout",
@@ -93,6 +97,7 @@ var (
 			worker:      NewTestWorkerObject(workWithError(err)),
 			errExpected: true,
 			numWorkers:  workerCount,
+			buffer:      bufferCount,
 		},
 		{
 			name:        "work with return of error with deadline",
@@ -100,11 +105,12 @@ var (
 			worker:      NewTestWorkerObject(workWithError(err)),
 			errExpected: true,
 			numWorkers:  workerCount,
+			buffer:      bufferCount,
 		},
 	}
 
 	getWorker = func(ctx context.Context, wt workerTest) *gorkers.Runner {
-		worker := gorkers.NewRunner(ctx, wt.worker, wt.numWorkers, wt.numWorkers)
+		worker := gorkers.NewRunner(ctx, wt.worker, wt.numWorkers, wt.buffer)
 		if wt.timeout > 0 {
 			worker.SetWorkerTimeout(wt.timeout)
 		}
@@ -121,6 +127,7 @@ type workerTest struct {
 	deadline    func() time.Time
 	worker      gorkers.WorkFunc
 	numWorkers  int64
+	buffer      int64
 	testSignal  bool
 	errExpected bool
 }
@@ -177,7 +184,7 @@ func TestWorkers(t *testing.T) {
 			ctx := context.Background()
 			workerOne := getWorker(ctx, tt)
 			// always need a consumer for the out tests so using basic here.
-			workerTwo := gorkers.NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount, workerCount).InFrom(workerOne)
+			workerTwo := gorkers.NewRunner(ctx, NewTestWorkerObject(workBasicNoOut()), workerCount, bufferCount).InFrom(workerOne)
 
 			if err := workerOne.Start(); err != nil && !tt.errExpected {
 				t.Error(err)

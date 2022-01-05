@@ -37,7 +37,7 @@ type Runner struct {
 }
 
 // NewRunner Factory function for a new Runner.  The Runner will handle running the workers logic.
-func NewRunner(ctx context.Context, w WorkFunc, maxWorkers int64, buffer int64) *Runner {
+func NewRunner(ctx context.Context, w WorkFunc, maxWorkers, buffer int64) *Runner {
 	runnerCtx, runnerCancel := context.WithCancel(ctx)
 	inputCtx, inputCancel := context.WithCancel(runnerCtx)
 
@@ -160,7 +160,7 @@ func (r *Runner) Stop() *Runner {
 func (r *Runner) work() {
 	var wg sync.WaitGroup
 
-	sem := semaphore.NewWeighted(int64(r.maxWorkers))
+	sem := semaphore.NewWeighted(r.maxWorkers)
 
 	defer func() {
 		wg.Wait()
