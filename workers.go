@@ -32,6 +32,7 @@ type Runner interface {
 	Start() Runner
 	Stop() chan error
 	Wait() error
+	AvailableWorkers() int64
 }
 
 type runner struct {
@@ -197,6 +198,11 @@ func (r *runner) waitForDrain() {
 	for len(r.limiter) > 0 || len(r.inChan) > 0 {
 		// Wait for the drain.
 	}
+}
+
+// AvailableWorkers .
+func (r *runner) AvailableWorkers() int64 {
+	return r.numWorkers - int64(len(r.limiter))
 }
 
 // startWork Runs the before function and starts processing until one of three things happen.
